@@ -6,6 +6,8 @@ CREATE TABLE IF NOT EXISTS menu_items (
     description TEXT NOT NULL DEFAULT '',
     price_cents INTEGER NOT NULL CHECK (price_cents >= 0),
     is_available INTEGER NOT NULL DEFAULT 1,
+    square_catalog_id TEXT,
+    square_variation_id TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 

@@ -76,6 +76,7 @@ def normalize_square_catalog_item(item: Any) -> dict[str, Any]:
     description = item_data.get("description", "")
 
     price_cents: int | None = None
+    variation_id: str | None = None
     for variation in item_data.get("variations", []) or []:
         variation_data = model_to_dict(variation)
         price_money = model_to_dict(variation_data.get("price_money"))
@@ -83,6 +84,7 @@ def normalize_square_catalog_item(item: Any) -> dict[str, Any]:
         if amount is not None:
             try:
                 price_cents = int(amount)
+                variation_id = variation_data.get("id") or getattr(variation, "id", None)
                 break
             except (TypeError, ValueError):
                 continue
@@ -92,6 +94,7 @@ def normalize_square_catalog_item(item: Any) -> dict[str, Any]:
         "name": name,
         "description": description,
         "price_cents": price_cents,
+        "variation_id": variation_id,
     }
 
 
@@ -125,6 +128,14 @@ def ensure_orders_schema_columns(conn: sqlite3.Connection) -> None:
         )
     if "square_payment_id" not in order_columns:
         conn.execute("ALTER TABLE orders ADD COLUMN square_payment_id TEXT")
+
+    menu_columns = {
+        row["name"] for row in conn.execute("PRAGMA table_info(menu_items)").fetchall()
+    }
+    if "square_catalog_id" not in menu_columns:
+        conn.execute("ALTER TABLE menu_items ADD COLUMN square_catalog_id TEXT")
+    if "square_variation_id" not in menu_columns:
+        conn.execute("ALTER TABLE menu_items ADD COLUMN square_variation_id TEXT")
 
 
 @app.after_request
@@ -196,33 +207,48 @@ def sync_square_catalog_to_menu():
             name = str(item.get("name", "")).strip()
             description = str(item.get("description", "")).strip()
             price_cents = item.get("price_cents")
+            square_catalog_id = item.get("id")
+            square_variation_id = item.get("variation_id")
 
             if not name or price_cents is None:
                 skipped += 1
                 continue
 
-            existing = conn.execute(
-                "SELECT id FROM menu_items WHERE name = ?",
-                (name,),
-            ).fetchone()
+            # Prefer matching by Square catalog ID if already synced once.
+            existing = None
+            if square_catalog_id:
+                existing = conn.execute(
+                    "SELECT id FROM menu_items WHERE square_catalog_id = ?",
+                    (square_catalog_id,),
+                ).fetchone()
+            if existing is None:
+                existing = conn.execute(
+                    "SELECT id FROM menu_items WHERE name = ?",
+                    (name,),
+                ).fetchone()
 
             if existing:
                 conn.execute(
                     """
                     UPDATE menu_items
-                    SET description = ?, price_cents = ?, is_available = 1
+                    SET description = ?, price_cents = ?, is_available = 1,
+                        square_catalog_id = ?, square_variation_id = ?
                     WHERE id = ?
                     """,
-                    (description, int(price_cents), existing["id"]),
+                    (description, int(price_cents), square_catalog_id,
+                     square_variation_id, existing["id"]),
                 )
                 updated += 1
             else:
                 conn.execute(
                     """
-                    INSERT INTO menu_items (name, description, price_cents, is_available)
-                    VALUES (?, ?, ?, 1)
+                    INSERT INTO menu_items
+                        (name, description, price_cents, is_available,
+                         square_catalog_id, square_variation_id)
+                    VALUES (?, ?, ?, 1, ?, ?)
                     """,
-                    (name, description, int(price_cents)),
+                    (name, description, int(price_cents),
+                     square_catalog_id, square_variation_id),
                 )
                 inserted += 1
 
@@ -712,8 +738,9 @@ def square_webhook():
         return jsonify({"error": "invalid JSON payload"}), 400
 
     event_type = event.get("type", "")
-    payment_data = (((event.get("data") or {}).get("object") or {}).get("payment") or {})
 
+    # --- Payment events ---
+    payment_data = (((event.get("data") or {}).get("object") or {}).get("payment") or {})
     if event_type in {"payment.created", "payment.updated"} and payment_data:
         payment_id = payment_data.get("id")
         payment_status = payment_data.get("status", "")
@@ -747,6 +774,88 @@ def square_webhook():
                         WHERE id = ?
                         """,
                         (payment_id, order_id),
+                    )
+                conn.commit()
+            finally:
+                conn.close()
+
+    # --- Catalog change: pull fresh items from Square and upsert locally ---
+    elif event_type == "catalog.version.updated":
+        if SQUARE_ACCESS_TOKEN:
+            try:
+                client = get_square_client()
+                response = client.catalog.search_items(limit=100)
+                catalog_items = response.items or []
+                normalized_items = [normalize_square_catalog_item(i) for i in catalog_items]
+                conn = get_db()
+                try:
+                    for item in normalized_items:
+                        name = str(item.get("name", "")).strip()
+                        description = str(item.get("description", "")).strip()
+                        price_cents = item.get("price_cents")
+                        square_catalog_id = item.get("id")
+                        square_variation_id = item.get("variation_id")
+                        if not name or price_cents is None:
+                            continue
+                        existing = None
+                        if square_catalog_id:
+                            existing = conn.execute(
+                                "SELECT id FROM menu_items WHERE square_catalog_id = ?",
+                                (square_catalog_id,),
+                            ).fetchone()
+                        if existing is None:
+                            existing = conn.execute(
+                                "SELECT id FROM menu_items WHERE name = ?", (name,)
+                            ).fetchone()
+                        if existing:
+                            conn.execute(
+                                """
+                                UPDATE menu_items
+                                SET description = ?, price_cents = ?, is_available = 1,
+                                    square_catalog_id = ?, square_variation_id = ?
+                                WHERE id = ?
+                                """,
+                                (description, int(price_cents), square_catalog_id,
+                                 square_variation_id, existing["id"]),
+                            )
+                        else:
+                            conn.execute(
+                                """
+                                INSERT INTO menu_items
+                                    (name, description, price_cents, is_available,
+                                     square_catalog_id, square_variation_id)
+                                VALUES (?, ?, ?, 1, ?, ?)
+                                """,
+                                (name, description, int(price_cents),
+                                 square_catalog_id, square_variation_id),
+                            )
+                    conn.commit()
+                finally:
+                    conn.close()
+            except Exception:
+                pass  # Square will retry the webhook on failure
+
+    # --- Inventory change: flip is_available when stock hits zero ---
+    elif event_type == "inventory.count.updated":
+        counts = (
+            ((event.get("data") or {}).get("object") or {})
+            .get("inventory_counts", [])
+        ) or []
+        if counts:
+            conn = get_db()
+            try:
+                for count in counts:
+                    variation_id = count.get("catalog_object_id", "")
+                    state = count.get("state", "")
+                    try:
+                        qty = float(count.get("quantity", "0"))
+                    except (TypeError, ValueError):
+                        qty = 0.0
+                    if not variation_id or state != "IN_STOCK":
+                        continue
+                    conn.execute(
+                        "UPDATE menu_items SET is_available = ? WHERE square_variation_id = ?",
+                        (1 if qty > 0 else 0, variation_id),
                     )
                 conn.commit()
             finally:
