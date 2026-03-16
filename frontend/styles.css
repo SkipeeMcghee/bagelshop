@@ -1,9 +1,10 @@
 :root {
-    --bg: #f7f2e9;
-    --ink: #2f241c;
-    --accent: #c06a2b;
-    --panel: #fffaf3;
-    --border: #e2d4bf;
+    --bg: #ffffff;
+    --ink: #1a2e22;
+    --accent: #2e7d5e;
+    --accent-secondary: #2a6496;
+    --panel: #f0f7f4;
+    --border: #b2d8c8;
 }
 
 * {
@@ -14,7 +15,7 @@ body {
     margin: 0;
     font-family: "Trebuchet MS", "Segoe UI", sans-serif;
     color: var(--ink);
-    background: radial-gradient(circle at top left, #fff6e7 0%, var(--bg) 55%);
+    background: #ffffff;
 }
 
 .container {
@@ -77,5 +78,13 @@ button {
 }
 
 button:hover {
-    filter: brightness(0.95);
+    background: #235f47;
+}
+
+#refresh-menu {
+    background: var(--accent-secondary);
+}
+
+#refresh-menu:hover {
+    background: #1e4e72;
 }
