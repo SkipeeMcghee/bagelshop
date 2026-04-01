@@ -3,6 +3,7 @@ PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS menu_items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT '',
     description TEXT NOT NULL DEFAULT '',
     price_cents INTEGER NOT NULL CHECK (price_cents >= 0),
     is_available INTEGER NOT NULL DEFAULT 1,

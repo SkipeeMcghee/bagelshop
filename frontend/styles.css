@@ -271,6 +271,22 @@ body {
     padding-top: 20px;
 }
 
+.menu-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.8fr) minmax(320px, 0.95fr);
+    gap: 22px;
+    align-items: start;
+}
+
+.cart-panel {
+    position: sticky;
+    top: 22px;
+}
+
+.cart-heading {
+    margin-bottom: 10px;
+}
+
 .section-heading {
     display: flex;
     align-items: center;
@@ -338,8 +354,126 @@ body {
 }
 
 .menu-grid {
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    grid-template-columns: 1fr;
     margin-top: 18px;
+}
+
+.menu-card-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-top: 16px;
+}
+
+.cart-quantity-pill,
+.payment-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 6px 10px;
+    border-radius: 999px;
+    font-size: 0.82rem;
+    font-weight: 700;
+}
+
+.cart-quantity-pill {
+    background: rgba(42, 100, 150, 0.12);
+    color: var(--accent-secondary);
+}
+
+.payment-pill {
+    background: rgba(46, 125, 94, 0.1);
+    color: var(--accent);
+}
+
+.add-to-cart-button {
+    min-width: 128px;
+}
+
+.cart-items {
+    display: grid;
+    gap: 12px;
+    margin-top: 16px;
+}
+
+.cart-item {
+    display: grid;
+    gap: 12px;
+    padding: 14px;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.78);
+}
+
+.cart-item-copy h3 {
+    margin: 0 0 4px;
+    font-size: 1rem;
+}
+
+.cart-item-copy p {
+    margin: 0;
+    color: var(--muted);
+}
+
+.cart-item-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.quantity-button {
+    width: 42px;
+    min-width: 42px;
+    padding: 10px 0;
+    border-radius: 12px;
+}
+
+.quantity-value {
+    min-width: 28px;
+    text-align: center;
+    font-weight: 700;
+}
+
+.cart-line-total {
+    margin-left: auto;
+}
+
+.cart-summary {
+    margin-top: 18px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+    display: grid;
+    gap: 12px;
+}
+
+.cart-total-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 1.05rem;
+}
+
+.payment-methods-note {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.checkout-form {
+    margin-top: 16px;
+}
+
+.checkout-form textarea {
+    width: 100%;
+    padding: 12px 14px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    font: inherit;
+    background: var(--panel-strong);
+    color: var(--ink);
+    resize: vertical;
 }
 
 .two-up {
@@ -401,6 +535,10 @@ button:hover {
     border: 1px solid rgba(42, 100, 150, 0.18);
 }
 
+.secondary-button:hover {
+    color: #fff;
+}
+
 .ghost-button {
     background: transparent;
     color: var(--ink);
@@ -443,7 +581,6 @@ button:hover {
     flex-shrink: 0;
 }
 
-.menu-card,
 .order-card {
     background: rgba(255, 255, 255, 0.86);
     border: 1px solid var(--border);
@@ -451,7 +588,118 @@ button:hover {
     padding: 18px;
 }
 
-.menu-card h3,
+.menu-categories {
+    margin-top: 18px;
+    gap: 28px;
+}
+
+.menu-category-section {
+    display: grid;
+    gap: 14px;
+}
+
+.menu-card {
+    display: grid;
+    grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
+    gap: 18px;
+    align-items: stretch;
+    min-height: 240px;
+    padding: 18px;
+    border: 1px solid rgba(32, 52, 67, 0.12);
+    border-radius: 20px;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 244, 238, 0.92));
+    box-shadow: 0 10px 24px rgba(21, 31, 38, 0.08);
+    transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+}
+
+.menu-card:hover {
+    transform: translateY(-2px);
+    border-color: rgba(201, 111, 59, 0.28);
+    box-shadow: 0 14px 28px rgba(21, 31, 38, 0.12);
+}
+
+.menu-card-image {
+    position: relative;
+    display: grid;
+    align-content: end;
+    gap: 8px;
+    min-height: 200px;
+    padding: 18px;
+    border-radius: 16px;
+    background:
+        radial-gradient(circle at top left, rgba(255, 255, 255, 0.5), transparent 38%),
+        linear-gradient(135deg, #d89a57 0%, #c46c3c 52%, #8d4f34 100%);
+    color: #fff8f0;
+    overflow: hidden;
+}
+
+.menu-card-image::after {
+    content: "";
+    position: absolute;
+    inset: auto -18px -28px auto;
+    width: 140px;
+    height: 140px;
+    border-radius: 50%;
+    background: rgba(255, 248, 240, 0.16);
+}
+
+.menu-card-image-badge {
+    position: relative;
+    z-index: 1;
+    display: inline-flex;
+    width: fit-content;
+    padding: 6px 10px;
+    border-radius: 999px;
+    background: rgba(255, 248, 240, 0.18);
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.menu-card-image-label,
+.menu-card-image-hint {
+    position: relative;
+    z-index: 1;
+}
+
+.menu-card-image-label {
+    font-size: 1.1rem;
+}
+
+.menu-card-image-hint {
+    color: rgba(255, 248, 240, 0.8);
+    font-size: 0.92rem;
+}
+
+.menu-card-body {
+    display: grid;
+    gap: 14px;
+    align-content: start;
+    min-width: 0;
+}
+
+.menu-category-heading {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+    padding-top: 8px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+}
+
+.menu-category-heading h3 {
+    margin: 0;
+    font-size: 1.1rem;
+}
+
+.menu-category-count {
+    color: var(--muted);
+    font-size: 0.92rem;
+    font-weight: 600;
+}
+
 .order-card h4 {
     margin: 0 0 8px;
 }
@@ -459,6 +707,10 @@ button:hover {
 .menu-card p,
 .order-card p {
     margin: 0;
+}
+
+.menu-card h3 {
+    margin: 0 0 6px;
 }
 
 .menu-card-header,
@@ -494,6 +746,20 @@ button:hover {
 .availability-pill.unavailable {
     background: rgba(120, 120, 120, 0.12);
     color: #5f6563;
+}
+
+.menu-card-actions {
+    margin-top: auto;
+}
+
+@media (max-width: 760px) {
+    .menu-card {
+        grid-template-columns: 1fr;
+    }
+
+    .menu-card-image {
+        min-height: 180px;
+    }
 }
 
 .profile-hero-image {
@@ -536,6 +802,14 @@ button:hover {
 @media (max-width: 760px) {
     .container {
         padding-inline: 14px;
+    }
+
+    .menu-layout {
+        grid-template-columns: 1fr;
+    }
+
+    .cart-panel {
+        position: static;
     }
 
     .site-header,

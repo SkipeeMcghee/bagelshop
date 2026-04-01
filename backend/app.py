@@ -43,6 +43,7 @@ GOOGLE_REDIRECT_URI = os.getenv(
 FLASK_SECRET_KEY = os.getenv("FLASK_SECRET_KEY", "dev-secret-change-me")
 SQUARE_ENABLE_CASH_APP_PAY = os.getenv("SQUARE_ENABLE_CASH_APP_PAY", "1")
 SQUARE_ENABLE_ACH_REQUEST = os.getenv("SQUARE_ENABLE_ACH_REQUEST", "1")
+SQUARE_API_VERSION = "2026-01-22"
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
@@ -64,6 +65,14 @@ def get_square_client() -> Square:
         else SquareEnvironment.SANDBOX
     )
     return Square(token=SQUARE_ACCESS_TOKEN, environment=environment)
+
+
+def get_square_api_base_url() -> str:
+    return (
+        "https://connect.squareup.com"
+        if SQUARE_ENVIRONMENT.lower() == "production"
+        else "https://connect.squareupsandbox.com"
+    )
 
 
 def verify_square_webhook_signature(
@@ -95,17 +104,112 @@ def model_to_dict(value: Any) -> dict[str, Any]:
     return {}
 
 
-def normalize_square_catalog_item(item: Any) -> dict[str, Any]:
+def extract_square_category_ids(item_details: dict[str, Any]) -> list[str]:
+    category_ids: list[str] = []
+
+    direct_category_id = str(item_details.get("category_id", "") or "").strip()
+    if direct_category_id:
+        category_ids.append(direct_category_id)
+
+    reporting_category = model_to_dict(item_details.get("reporting_category"))
+    reporting_category_id = str(
+        reporting_category.get("id") or reporting_category.get("category_id") or ""
+    ).strip()
+    if reporting_category_id:
+        category_ids.append(reporting_category_id)
+
+    for raw_category in item_details.get("categories", []) or []:
+        if isinstance(raw_category, str):
+            category_id = raw_category.strip()
+        else:
+            category = model_to_dict(raw_category)
+            category_id = str(category.get("id") or category.get("category_id") or "").strip()
+        if category_id:
+            category_ids.append(category_id)
+
+    return list(dict.fromkeys(category_ids))
+
+
+def fetch_square_category_names(category_ids: list[str]) -> dict[str, str]:
+    if not category_ids or not SQUARE_ACCESS_TOKEN:
+        return {}
+
+    try:
+        response = requests.post(
+            f"{get_square_api_base_url()}/v2/catalog/batch-retrieve",
+            headers={
+                "Authorization": f"Bearer {SQUARE_ACCESS_TOKEN}",
+                "Square-Version": SQUARE_API_VERSION,
+                "Content-Type": "application/json",
+            },
+            json={"object_ids": category_ids},
+            timeout=20,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except (requests.RequestException, ValueError):
+        return {}
+
+    category_names: dict[str, str] = {}
+    for raw_object in (payload.get("objects") or []) + (payload.get("related_objects") or []):
+        obj = model_to_dict(raw_object)
+        object_id = str(obj.get("id") or "").strip()
+        category_data = model_to_dict(obj.get("category_data"))
+        category_name = str(obj.get("name") or category_data.get("name") or "").strip()
+        if object_id and category_name:
+            category_names[object_id] = category_name
+
+    return category_names
+
+
+def get_square_category_name(
+    item_details: dict[str, Any], category_names: dict[str, str] | None = None
+) -> str:
+    reporting_category = model_to_dict(item_details.get("reporting_category"))
+    category_name = str(reporting_category.get("name", "") or "").strip()
+    if category_name:
+        return category_name
+
+    for raw_category in item_details.get("categories", []) or []:
+        if isinstance(raw_category, str):
+            category = {}
+            category_id = raw_category.strip()
+        else:
+            category = model_to_dict(raw_category)
+            category_id = str(category.get("id") or category.get("category_id") or "").strip()
+
+        category_details = model_to_dict(category.get("category_data"))
+        category_name = str(category.get("name") or category_details.get("name") or "").strip()
+        if category_name:
+            return category_name
+
+        if category_id and category_names and category_names.get(category_id):
+            return category_names[category_id]
+
+    for category_id in extract_square_category_ids(item_details):
+        if category_names and category_names.get(category_id):
+            return category_names[category_id]
+
+    return ""
+
+
+def normalize_square_catalog_item(
+    item: Any, *, category_names: dict[str, str] | None = None
+) -> dict[str, Any]:
     item_id = getattr(item, "id", None)
     item_data = model_to_dict(item)
-    name = item_data.get("name", "")
-    description = item_data.get("description", "")
+    item_details = model_to_dict(item_data.get("item_data"))
+    name = str(item_details.get("name", "") or "").strip()
+    description = str(item_details.get("description", "") or "").strip()
+
+    category_name = get_square_category_name(item_details, category_names)
 
     price_cents: int | None = None
     variation_id: str | None = None
-    for variation in item_data.get("variations", []) or []:
+    for variation in item_details.get("variations", []) or []:
         variation_data = model_to_dict(variation)
-        price_money = model_to_dict(variation_data.get("price_money"))
+        variation_details = model_to_dict(variation_data.get("item_variation_data"))
+        price_money = model_to_dict(variation_details.get("price_money"))
         amount = price_money.get("amount")
         if amount is not None:
             try:
@@ -118,9 +222,101 @@ def normalize_square_catalog_item(item: Any) -> dict[str, Any]:
     return {
         "id": item_id,
         "name": name,
+        "category": category_name,
         "description": description,
         "price_cents": price_cents,
         "variation_id": variation_id,
+    }
+
+
+def sync_square_catalog_into_menu(
+    conn: sqlite3.Connection, *, text_filter: str | None = None, limit: int = 100
+) -> dict[str, int]:
+    client = get_square_client()
+    response = client.catalog.search_items(text_filter=text_filter, limit=limit)
+    catalog_items = response.items or []
+    category_ids: list[str] = []
+    for item in catalog_items:
+        item_data = model_to_dict(item)
+        item_details = model_to_dict(item_data.get("item_data"))
+        category_ids.extend(extract_square_category_ids(item_details))
+
+    category_names = fetch_square_category_names(list(dict.fromkeys(category_ids)))
+    normalized = [
+        normalize_square_catalog_item(item, category_names=category_names)
+        for item in catalog_items
+    ]
+
+    inserted = 0
+    updated = 0
+    skipped = 0
+
+    for item in normalized:
+        name = str(item.get("name", "")).strip()
+        category = str(item.get("category", "") or "").strip()
+        description = str(item.get("description", "")).strip()
+        price_cents = item.get("price_cents")
+        square_catalog_id = item.get("id")
+        square_variation_id = item.get("variation_id")
+
+        if not name or price_cents is None:
+            skipped += 1
+            continue
+
+        existing = None
+        if square_catalog_id:
+            existing = conn.execute(
+                "SELECT id FROM menu_items WHERE square_catalog_id = ?",
+                (square_catalog_id,),
+            ).fetchone()
+        if existing is None:
+            existing = conn.execute(
+                "SELECT id FROM menu_items WHERE name = ?",
+                (name,),
+            ).fetchone()
+
+        if existing:
+            conn.execute(
+                """
+                UPDATE menu_items
+                SET category = ?, description = ?, price_cents = ?, is_available = 1,
+                    square_catalog_id = ?, square_variation_id = ?
+                WHERE id = ?
+                """,
+                (
+                    category,
+                    description,
+                    int(price_cents),
+                    square_catalog_id,
+                    square_variation_id,
+                    existing["id"],
+                ),
+            )
+            updated += 1
+        else:
+            conn.execute(
+                """
+                INSERT INTO menu_items
+                    (name, category, description, price_cents, is_available,
+                     square_catalog_id, square_variation_id)
+                VALUES (?, ?, ?, ?, 1, ?, ?)
+                """,
+                (
+                    name,
+                    category,
+                    description,
+                    int(price_cents),
+                    square_catalog_id,
+                    square_variation_id,
+                ),
+            )
+            inserted += 1
+
+    return {
+        "inserted": inserted,
+        "updated": updated,
+        "skipped": skipped,
+        "total_catalog_items": len(normalized),
     }
 
 
@@ -164,6 +360,8 @@ def ensure_orders_schema_columns(conn: sqlite3.Connection) -> None:
     menu_columns = {
         row["name"] for row in conn.execute("PRAGMA table_info(menu_items)").fetchall()
     }
+    if "category" not in menu_columns:
+        conn.execute("ALTER TABLE menu_items ADD COLUMN category TEXT NOT NULL DEFAULT ''")
     if "square_catalog_id" not in menu_columns:
         conn.execute("ALTER TABLE menu_items ADD COLUMN square_catalog_id TEXT")
     if "square_variation_id" not in menu_columns:
@@ -783,7 +981,17 @@ def get_square_catalog_items():
         return jsonify({"error": "Square catalog request failed", "details": str(exc)}), 502
 
     catalog_items = response.items or []
-    normalized = [normalize_square_catalog_item(item) for item in catalog_items]
+    category_ids: list[str] = []
+    for item in catalog_items:
+        item_data = model_to_dict(item)
+        item_details = model_to_dict(item_data.get("item_data"))
+        category_ids.extend(extract_square_category_ids(item_details))
+
+    category_names = fetch_square_category_names(list(dict.fromkeys(category_ids)))
+    normalized = [
+        normalize_square_catalog_item(item, category_names=category_names)
+        for item in catalog_items
+    ]
     return jsonify({"count": len(normalized), "items": normalized})
 
 
@@ -795,81 +1003,21 @@ def sync_square_catalog_to_menu():
     data = request.get_json(silent=True) or {}
     text_filter = str(data.get("q", "")).strip() or None
 
-    client = get_square_client()
-    try:
-        response = client.catalog.search_items(text_filter=text_filter, limit=100)
-    except ApiError as exc:
-        return jsonify({"error": "Square catalog request failed", "details": str(exc)}), 502
-
-    catalog_items = response.items or []
-    normalized = [normalize_square_catalog_item(item) for item in catalog_items]
-
     conn = get_db()
-    inserted = 0
-    updated = 0
-    skipped = 0
     try:
-        for item in normalized:
-            name = str(item.get("name", "")).strip()
-            description = str(item.get("description", "")).strip()
-            price_cents = item.get("price_cents")
-            square_catalog_id = item.get("id")
-            square_variation_id = item.get("variation_id")
-
-            if not name or price_cents is None:
-                skipped += 1
-                continue
-
-            # Prefer matching by Square catalog ID if already synced once.
-            existing = None
-            if square_catalog_id:
-                existing = conn.execute(
-                    "SELECT id FROM menu_items WHERE square_catalog_id = ?",
-                    (square_catalog_id,),
-                ).fetchone()
-            if existing is None:
-                existing = conn.execute(
-                    "SELECT id FROM menu_items WHERE name = ?",
-                    (name,),
-                ).fetchone()
-
-            if existing:
-                conn.execute(
-                    """
-                    UPDATE menu_items
-                    SET description = ?, price_cents = ?, is_available = 1,
-                        square_catalog_id = ?, square_variation_id = ?
-                    WHERE id = ?
-                    """,
-                    (description, int(price_cents), square_catalog_id,
-                     square_variation_id, existing["id"]),
-                )
-                updated += 1
-            else:
-                conn.execute(
-                    """
-                    INSERT INTO menu_items
-                        (name, description, price_cents, is_available,
-                         square_catalog_id, square_variation_id)
-                    VALUES (?, ?, ?, 1, ?, ?)
-                    """,
-                    (name, description, int(price_cents),
-                     square_catalog_id, square_variation_id),
-                )
-                inserted += 1
-
+        try:
+            sync_result = sync_square_catalog_into_menu(
+                conn,
+                text_filter=text_filter,
+                limit=100,
+            )
+        except ApiError as exc:
+            return jsonify({"error": "Square catalog request failed", "details": str(exc)}), 502
         conn.commit()
     finally:
         conn.close()
 
-    return jsonify(
-        {
-            "inserted": inserted,
-            "updated": updated,
-            "skipped": skipped,
-            "total_catalog_items": len(normalized),
-        }
-    ), 200
+    return jsonify(sync_result), 200
 
 
 def parse_checkout_items(data: dict[str, Any]) -> list[dict[str, int]]:
@@ -996,12 +1144,33 @@ def create_local_order(
 def get_menu_items():
     conn = get_db()
     try:
-        rows = conn.execute(
-            """
-            SELECT id, name, description, price_cents, is_available, created_at
+        query = """
+            SELECT id, name, category, description, price_cents, is_available, created_at
             FROM menu_items
-            ORDER BY id ASC
-            """
+        """
+        params: tuple[Any, ...] = ()
+
+        if SQUARE_ACCESS_TOKEN:
+            try:
+                sync_square_catalog_into_menu(conn)
+                conn.commit()
+            except ApiError:
+                conn.rollback()
+            query += " WHERE square_catalog_id IS NOT NULL"
+
+        rows = conn.execute(
+            f"""
+            {query}
+            ORDER BY
+                CASE
+                    WHEN TRIM(COALESCE(category, '')) = '' THEN 1
+                    ELSE 0
+                END ASC,
+                LOWER(COALESCE(NULLIF(TRIM(category), ''), 'Uncategorized')) ASC,
+                LOWER(name) ASC,
+                id ASC
+            """,
+            params,
         ).fetchall()
     finally:
         conn.close()
@@ -1029,16 +1198,16 @@ def create_menu_item():
     try:
         cursor = conn.execute(
             """
-            INSERT INTO menu_items (name, description, price_cents)
-            VALUES (?, ?, ?)
+            INSERT INTO menu_items (name, category, description, price_cents)
+            VALUES (?, ?, ?, ?)
             """,
-            (name, description, price_cents),
+            (name, "", description, price_cents),
         )
         conn.commit()
         item_id = cursor.lastrowid
         row = conn.execute(
             """
-            SELECT id, name, description, price_cents, is_available, created_at
+            SELECT id, name, category, description, price_cents, is_available, created_at
             FROM menu_items
             WHERE id = ?
             """,
@@ -1556,49 +1725,9 @@ def square_webhook():
                 client = get_square_client()
                 response = client.catalog.search_items(limit=100)
                 catalog_items = response.items or []
-                normalized_items = [normalize_square_catalog_item(i) for i in catalog_items]
                 conn = get_db()
                 try:
-                    for item in normalized_items:
-                        name = str(item.get("name", "")).strip()
-                        description = str(item.get("description", "")).strip()
-                        price_cents = item.get("price_cents")
-                        square_catalog_id = item.get("id")
-                        square_variation_id = item.get("variation_id")
-                        if not name or price_cents is None:
-                            continue
-                        existing = None
-                        if square_catalog_id:
-                            existing = conn.execute(
-                                "SELECT id FROM menu_items WHERE square_catalog_id = ?",
-                                (square_catalog_id,),
-                            ).fetchone()
-                        if existing is None:
-                            existing = conn.execute(
-                                "SELECT id FROM menu_items WHERE name = ?", (name,)
-                            ).fetchone()
-                        if existing:
-                            conn.execute(
-                                """
-                                UPDATE menu_items
-                                SET description = ?, price_cents = ?, is_available = 1,
-                                    square_catalog_id = ?, square_variation_id = ?
-                                WHERE id = ?
-                                """,
-                                (description, int(price_cents), square_catalog_id,
-                                 square_variation_id, existing["id"]),
-                            )
-                        else:
-                            conn.execute(
-                                """
-                                INSERT INTO menu_items
-                                    (name, description, price_cents, is_available,
-                                     square_catalog_id, square_variation_id)
-                                VALUES (?, ?, ?, 1, ?, ?)
-                                """,
-                                (name, description, int(price_cents),
-                                 square_catalog_id, square_variation_id),
-                            )
+                    sync_square_catalog_into_menu(conn)
                     conn.commit()
                 finally:
                     conn.close()

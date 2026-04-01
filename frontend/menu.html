@@ -35,16 +35,47 @@
             </div>
         </header>
 
-        <section class="panel menu-panel">
-            <div class="section-heading">
-                <div>
-                    <p class="eyebrow">Today&apos;s menu</p>
-                    <h2>Freshly baked favorites</h2>
+        <section class="menu-layout">
+            <section class="panel menu-panel">
+                <div class="section-heading">
+                    <div>
+                        <p class="eyebrow">Today&apos;s menu</p>
+                        <h2>Freshly baked favorites</h2>
+                    </div>
+                    <button id="refresh-menu" type="button">Refresh Menu</button>
                 </div>
-                <button id="refresh-menu" type="button">Refresh Menu</button>
-            </div>
-            <p class="section-subtitle" id="menu-status">Loading menu...</p>
-            <div id="menu-list" class="menu-grid" aria-live="polite"></div>
+                <p class="section-subtitle" id="menu-status">Loading menu...</p>
+                <div id="menu-list" class="menu-categories" aria-live="polite"></div>
+            </section>
+
+            <aside class="panel cart-panel">
+                <div class="section-heading cart-heading">
+                    <div>
+                        <p class="eyebrow">Your order</p>
+                        <h2>Cart</h2>
+                    </div>
+                    <button id="clear-cart" type="button" class="ghost-button">Clear</button>
+                </div>
+                <p class="section-subtitle" id="cart-status">Add items from the menu to start an order.</p>
+                <div id="cart-items" class="cart-items" aria-live="polite"></div>
+                <div class="cart-summary">
+                    <div class="cart-total-row">
+                        <span>Total</span>
+                        <strong id="cart-total">$0.00</strong>
+                    </div>
+                    <div class="payment-methods-note">
+                        <span class="payment-pill">Apple Pay</span>
+                        <span class="payment-pill">Cash App Pay</span>
+                        <span class="payment-pill">Card Entry</span>
+                    </div>
+                </div>
+                <form id="checkout-form" class="checkout-form">
+                    <input id="checkout-email" name="buyer_email" type="email" placeholder="Email for receipt" />
+                    <textarea id="checkout-notes" name="notes" rows="3" placeholder="Order notes (optional)"></textarea>
+                    <button id="checkout-button" type="submit">Pay with Square</button>
+                </form>
+                <p class="feedback-message" id="checkout-message"></p>
+            </aside>
         </section>
     </main>
 

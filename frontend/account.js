@@ -1,4 +1,4 @@
-const BACKEND_BASE = "http://127.0.0.1:5000";
+const BACKEND_BASE = "http://127.0.0.1:5001";
 const API_BASE = `${BACKEND_BASE}/api`;
 const DEFAULT_PROFILE_IMAGE = "../assets/images/profilepicblank.png";
 
