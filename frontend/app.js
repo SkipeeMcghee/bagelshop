@@ -1,5 +1,5 @@
-const API_BASE = "http://127.0.0.1:5000/api";
-const ACCOUNT_STORAGE_KEY = "bagelshopAccount";
+const BACKEND_BASE = "http://127.0.0.1:5000";
+const API_BASE = `${BACKEND_BASE}/api`;
 const DEFAULT_PROFILE_IMAGE = "../assets/images/profilepicblank.png";
 
 const menuList = document.getElementById("menu-list");
@@ -13,19 +13,24 @@ function moneyFromCents(cents) {
     return `$${(Number(cents) / 100).toFixed(2)}`;
 }
 
-function getSavedAccount() {
+async function getSessionUser() {
     try {
-        const raw = localStorage.getItem(ACCOUNT_STORAGE_KEY);
-        return raw ? JSON.parse(raw) : null;
+        const response = await fetch(`${API_BASE}/me`, {
+            credentials: "include",
+        });
+        const data = await response.json();
+        if (!response.ok || !data?.authenticated) {
+            return null;
+        }
+        return data.user || null;
     } catch (error) {
         return null;
     }
 }
 
-function updateHeaderAccountState() {
-    const account = getSavedAccount();
-    const profileImageUrl = account?.profileImageUrl || DEFAULT_PROFILE_IMAGE;
-    const label = account?.displayName || account?.username || "Create or sign in";
+function updateHeaderAccountState(account) {
+    const profileImageUrl = account?.profile_image_url || DEFAULT_PROFILE_IMAGE;
+    const label = account?.display_name || account?.username || "Create or sign in";
     const destination = account ? "account.html" : "auth.html";
 
     for (const link of accountLinks) {
@@ -100,9 +105,8 @@ async function fetchMenu() {
 if (refreshMenuButton) {
     refreshMenuButton.addEventListener("click", fetchMenu);
 }
-window.addEventListener("storage", updateHeaderAccountState);
 
-updateHeaderAccountState();
+getSessionUser().then(updateHeaderAccountState);
 
 if (menuList && menuStatus && refreshMenuButton) {
     fetchMenu();

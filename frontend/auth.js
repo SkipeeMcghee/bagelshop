@@ -1,36 +1,9 @@
-const ACCOUNT_STORAGE_KEY = "bagelshopAccount";
-const REGISTERED_ACCOUNT_STORAGE_KEY = "bagelshopRegisteredAccount";
-const DEFAULT_PROFILE_IMAGE = "../assets/images/profilepicblank.png";
+const BACKEND_BASE = "http://127.0.0.1:5000";
+const API_BASE = `${BACKEND_BASE}/api`;
 
 const signInForm = document.getElementById("sign-in-form");
 const createAccountForm = document.getElementById("create-account-form");
 const continueWithGoogleButton = document.getElementById("continue-with-google");
-
-function getSavedAccount() {
-    try {
-        const raw = localStorage.getItem(ACCOUNT_STORAGE_KEY);
-        return raw ? JSON.parse(raw) : null;
-    } catch (error) {
-        return null;
-    }
-}
-
-function getRegisteredAccount() {
-    try {
-        const raw = localStorage.getItem(REGISTERED_ACCOUNT_STORAGE_KEY);
-        return raw ? JSON.parse(raw) : null;
-    } catch (error) {
-        return null;
-    }
-}
-
-function saveSessionAccount(account) {
-    localStorage.setItem(ACCOUNT_STORAGE_KEY, JSON.stringify(account));
-}
-
-function saveRegisteredAccount(account) {
-    localStorage.setItem(REGISTERED_ACCOUNT_STORAGE_KEY, JSON.stringify(account));
-}
 
 function clearFeedback() {
     for (const element of document.querySelectorAll(".feedback-message")) {
@@ -53,92 +26,103 @@ function redirectToAccount() {
     window.location.href = "account.html";
 }
 
-const existingSession = getSavedAccount();
-if (existingSession) {
-    redirectToAccount();
+async function apiRequest(path, options = {}) {
+    const response = await fetch(`${API_BASE}${path}`, {
+        credentials: "include",
+        headers: {
+            "Content-Type": "application/json",
+            ...(options.headers || {}),
+        },
+        ...options,
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new Error(data?.error || "Request failed");
+    }
+    return data;
 }
 
-signInForm.addEventListener("submit", (event) => {
+async function checkExistingSession() {
+    try {
+        const data = await apiRequest("/me", { method: "GET" });
+        if (data?.authenticated) {
+            redirectToAccount();
+        }
+    } catch (error) {
+        // Stay on auth page if not signed in.
+    }
+}
+
+function showOAuthErrorFromUrl() {
+    const params = new URLSearchParams(window.location.search);
+    const error = params.get("error");
+    if (!error) {
+        return;
+    }
+
+    const messages = {
+        google_not_configured: "Google sign-in is not configured yet on the backend.",
+        invalid_google_state: "The Google sign-in session expired. Please try again.",
+        missing_google_code: "Google did not return an authorization code.",
+        google_token_exchange_failed: "Google sign-in failed during token exchange.",
+        google_profile_incomplete: "Google did not return the profile information required to sign in.",
+        access_denied: "Google sign-in was cancelled or denied.",
+    };
+    setFeedback("sign-in-message", messages[error] || "Google sign-in failed.", "error");
+    window.history.replaceState({}, document.title, window.location.pathname);
+}
+
+signInForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     clearFeedback();
 
-    const registered = getRegisteredAccount();
     const formData = new FormData(signInForm);
-    const username = String(formData.get("username") || "").trim();
-    const password = String(formData.get("password") || "");
-
-    if (!registered || registered.authMethod !== "local") {
-        setFeedback("sign-in-message", "No local account has been created in this browser yet.", "error");
-        return;
+    try {
+        await apiRequest("/auth/login", {
+            method: "POST",
+            body: JSON.stringify({
+                username: String(formData.get("username") || "").trim(),
+                password: String(formData.get("password") || ""),
+            }),
+        });
+        redirectToAccount();
+    } catch (error) {
+        setFeedback("sign-in-message", String(error.message || error), "error");
     }
-
-    const usernameMatches = username === registered.username || username === registered.email;
-    if (!usernameMatches || password !== registered.password) {
-        setFeedback("sign-in-message", "Incorrect username/email or password.", "error");
-        return;
-    }
-
-    saveSessionAccount({ ...registered, password: undefined });
-    redirectToAccount();
 });
 
-createAccountForm.addEventListener("submit", (event) => {
+createAccountForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     clearFeedback();
 
     const formData = new FormData(createAccountForm);
-    const username = String(formData.get("username") || "").trim();
-    const email = String(formData.get("email") || "").trim();
     const password = String(formData.get("password") || "");
     const confirmPassword = String(formData.get("confirm_password") || "");
-
-    if (!username) {
-        setFeedback("create-account-message", "Username is required.", "error");
-        return;
-    }
-
-    if (password.length < 6) {
-        setFeedback("create-account-message", "Use at least 6 characters for the password.", "error");
-        return;
-    }
 
     if (password !== confirmPassword) {
         setFeedback("create-account-message", "Passwords do not match.", "error");
         return;
     }
 
-    const nextAccount = {
-        authMethod: "local",
-        username,
-        displayName: username,
-        email,
-        phone: "",
-        profileImageUrl: DEFAULT_PROFILE_IMAGE,
-        linkedCustomerId: "",
-        hasPassword: true,
-        password,
-        passwordUpdatedAt: new Date().toISOString(),
-    };
-
-    saveRegisteredAccount(nextAccount);
-    saveSessionAccount({ ...nextAccount, password: undefined });
-    redirectToAccount();
+    try {
+        await apiRequest("/auth/register", {
+            method: "POST",
+            body: JSON.stringify({
+                username: String(formData.get("username") || "").trim(),
+                email: String(formData.get("email") || "").trim(),
+                password,
+            }),
+        });
+        redirectToAccount();
+    } catch (error) {
+        setFeedback("create-account-message", String(error.message || error), "error");
+    }
 });
 
 continueWithGoogleButton.addEventListener("click", () => {
-    clearFeedback();
-
-    const nextAccount = {
-        authMethod: "google",
-        username: "googleuser",
-        displayName: "Google User",
-        email: "google.user@example.com",
-        phone: "",
-        profileImageUrl: DEFAULT_PROFILE_IMAGE,
-        linkedCustomerId: "",
-        hasPassword: false,
-    };
-
-    saveSessionAccount(nextAccount);
-    redirectToAccount();
+    window.location.href = `${BACKEND_BASE}/auth/google/start`;
 });
+
+checkExistingSession();
+showOAuthErrorFromUrl();

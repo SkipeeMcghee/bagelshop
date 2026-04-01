@@ -1,6 +1,5 @@
-const API_BASE = "http://127.0.0.1:5000/api";
-const ACCOUNT_STORAGE_KEY = "bagelshopAccount";
-const REGISTERED_ACCOUNT_STORAGE_KEY = "bagelshopRegisteredAccount";
+const BACKEND_BASE = "http://127.0.0.1:5000";
+const API_BASE = `${BACKEND_BASE}/api`;
 const DEFAULT_PROFILE_IMAGE = "../assets/images/profilepicblank.png";
 
 const accountProfileImage = document.getElementById("account-profile-image");
@@ -12,31 +11,23 @@ const signOutButton = document.getElementById("sign-out-button");
 const refreshOrdersButton = document.getElementById("refresh-orders");
 const ordersStatus = document.getElementById("orders-status");
 const ordersList = document.getElementById("orders-list");
+let currentUser = null;
 
-function getSavedAccount() {
-    try {
-        const raw = localStorage.getItem(ACCOUNT_STORAGE_KEY);
-        return raw ? JSON.parse(raw) : null;
-    } catch (error) {
-        return null;
+async function apiRequest(path, options = {}) {
+    const response = await fetch(`${API_BASE}${path}`, {
+        credentials: "include",
+        headers: {
+            "Content-Type": "application/json",
+            ...(options.headers || {}),
+        },
+        ...options,
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new Error(data?.error || "Request failed");
     }
-}
-
-function saveAccount(account) {
-    localStorage.setItem(ACCOUNT_STORAGE_KEY, JSON.stringify(account));
-}
-
-function getRegisteredAccount() {
-    try {
-        const raw = localStorage.getItem(REGISTERED_ACCOUNT_STORAGE_KEY);
-        return raw ? JSON.parse(raw) : null;
-    } catch (error) {
-        return null;
-    }
-}
-
-function saveRegisteredAccount(account) {
-    localStorage.setItem(REGISTERED_ACCOUNT_STORAGE_KEY, JSON.stringify(account));
+    return data;
 }
 
 function clearFeedback() {
@@ -60,39 +51,29 @@ function getAccountSummary(account) {
     if (!account) {
         return {
             title: "Guest",
-            text: "Create an account or preview Google sign-in to personalize your bagel orders.",
+            text: "Sign in to manage your profile and view your orders.",
             image: DEFAULT_PROFILE_IMAGE,
         };
     }
 
-    const authLabel = account.authMethod === "google" ? "Signed in with Google" : "Signed in with a local account";
+    const authLabel = account.auth_provider === "google" ? "Signed in with Google" : "Signed in with a local account";
     return {
-        title: account.displayName || account.username || "Account",
+        title: account.display_name || account.username || "Account",
         text: `${authLabel}. Update your profile details, reset your password, and review your past orders here.`,
-        image: account.profileImageUrl || DEFAULT_PROFILE_IMAGE,
+        image: account.profile_image_url || DEFAULT_PROFILE_IMAGE,
     };
 }
 
 function populateForms(account) {
-    accountDetailsForm.elements.display_name.value = account?.displayName || "";
+    accountDetailsForm.elements.display_name.value = account?.display_name || "";
     accountDetailsForm.elements.username.value = account?.username || "";
     accountDetailsForm.elements.email.value = account?.email || "";
     accountDetailsForm.elements.phone.value = account?.phone || "";
-    accountDetailsForm.elements.profile_image_url.value = account?.profileImageUrl || "";
-    accountDetailsForm.elements.linked_customer_id.value = account?.linkedCustomerId || "";
+    accountDetailsForm.elements.profile_image_url.value = account?.profile_image_url || "";
+    accountDetailsForm.elements.linked_customer_id.value = account?.customer_id || "";
 }
 
-function requireAccount() {
-    const account = getSavedAccount();
-    if (!account) {
-        window.location.href = "auth.html";
-        return null;
-    }
-    return account;
-}
-
-function renderSummary() {
-    const account = getSavedAccount();
+function renderSummary(account) {
     const summary = getAccountSummary(account);
 
     accountDisplayName.textContent = summary.title;
@@ -149,16 +130,8 @@ function createOrderCard(order) {
 }
 
 async function loadPastOrders() {
-    const account = getSavedAccount();
-    const linkedCustomerId = Number(account?.linkedCustomerId || 0);
-
-    if (!account) {
+    if (!currentUser) {
         renderEmptyOrders("Sign in first to start collecting account details and order history.");
-        return;
-    }
-
-    if (!linkedCustomerId) {
-        renderEmptyOrders("Add your existing customer ID above, then refresh orders to see matching purchases.");
         return;
     }
 
@@ -166,19 +139,10 @@ async function loadPastOrders() {
     ordersList.innerHTML = "";
 
     try {
-        const response = await fetch(`${API_BASE}/orders`);
-        const data = await response.json();
-
-        if (!response.ok) {
-            throw new Error(data?.error || "request failed");
-        }
-
-        const matchingOrders = (Array.isArray(data) ? data : []).filter(
-            (order) => Number(order.customer_id) === linkedCustomerId,
-        );
+        const matchingOrders = await apiRequest("/my/orders", { method: "GET" });
 
         if (matchingOrders.length === 0) {
-            renderEmptyOrders("No past orders match that customer ID yet.");
+            renderEmptyOrders("No past orders yet.");
             return;
         }
 
@@ -187,99 +151,98 @@ async function loadPastOrders() {
             ordersList.appendChild(createOrderCard(order));
         }
     } catch (error) {
-        renderEmptyOrders(`Could not load orders: ${error}`);
+        renderEmptyOrders(`Could not load orders: ${error.message || error}`);
     }
 }
 
-accountDetailsForm.addEventListener("submit", (event) => {
+accountDetailsForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     clearFeedback();
 
-    const existing = getSavedAccount() || { authMethod: "local", hasPassword: false };
     const formData = new FormData(accountDetailsForm);
-
-    const nextAccount = {
-        ...existing,
-        displayName: String(formData.get("display_name") || "").trim(),
-        username: String(formData.get("username") || "").trim(),
-        email: String(formData.get("email") || "").trim(),
-        phone: String(formData.get("phone") || "").trim(),
-        profileImageUrl: String(formData.get("profile_image_url") || "").trim() || DEFAULT_PROFILE_IMAGE,
-        linkedCustomerId: String(formData.get("linked_customer_id") || "").trim(),
-    };
-
-    saveAccount(nextAccount);
-    if (nextAccount.authMethod === "local") {
-        const registered = getRegisteredAccount();
-        saveRegisteredAccount({
-            ...(registered || {}),
-            ...nextAccount,
-            password: registered?.password || "",
+    try {
+        const data = await apiRequest("/me", {
+            method: "POST",
+            body: JSON.stringify({
+                display_name: String(formData.get("display_name") || "").trim(),
+                username: String(formData.get("username") || "").trim(),
+                email: String(formData.get("email") || "").trim(),
+                phone: String(formData.get("phone") || "").trim(),
+                profile_image_url:
+                    String(formData.get("profile_image_url") || "").trim() || DEFAULT_PROFILE_IMAGE,
+            }),
         });
+        currentUser = data.user;
+        renderSummary(currentUser);
+        setFeedback("account-details-message", "Account details updated.");
+    } catch (error) {
+        setFeedback("account-details-message", String(error.message || error), "error");
     }
-    renderSummary();
-    loadPastOrders();
-    setFeedback("account-details-message", "Account details updated.");
 });
 
-passwordResetForm.addEventListener("submit", (event) => {
+passwordResetForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     clearFeedback();
 
-    const account = getSavedAccount();
-    if (!account) {
-        setFeedback("password-reset-message", "Create or preview an account before resetting a password.", "error");
+    if (!currentUser) {
+        setFeedback("password-reset-message", "Sign in before resetting a password.", "error");
         return;
     }
 
-    if (account.authMethod === "google") {
+    if (currentUser.auth_provider === "google") {
         setFeedback("password-reset-message", "Google sign-in uses Google credentials, so there is no local password to reset here.", "error");
         return;
     }
 
     const formData = new FormData(passwordResetForm);
+    const currentPassword = String(formData.get("current_password") || "");
     const newPassword = String(formData.get("new_password") || "");
     const confirmPassword = String(formData.get("confirm_new_password") || "");
-
-    if (newPassword.length < 6) {
-        setFeedback("password-reset-message", "Use at least 6 characters for the new password.", "error");
-        return;
-    }
 
     if (newPassword !== confirmPassword) {
         setFeedback("password-reset-message", "New passwords do not match.", "error");
         return;
     }
 
-    saveAccount({
-        ...account,
-        hasPassword: true,
-        passwordUpdatedAt: new Date().toISOString(),
-    });
-
-    const registered = getRegisteredAccount();
-    if (registered && registered.authMethod === "local") {
-        saveRegisteredAccount({
-            ...registered,
-            password: newPassword,
-            passwordUpdatedAt: new Date().toISOString(),
+    try {
+        await apiRequest("/me/password", {
+            method: "POST",
+            body: JSON.stringify({
+                current_password: currentPassword,
+                new_password: newPassword,
+            }),
         });
+        passwordResetForm.reset();
+        setFeedback("password-reset-message", "Password updated.");
+    } catch (error) {
+        setFeedback("password-reset-message", String(error.message || error), "error");
     }
-
-    passwordResetForm.reset();
-    setFeedback("password-reset-message", "Password reset for this browser preview.");
 });
 
-signOutButton.addEventListener("click", () => {
-    localStorage.removeItem(ACCOUNT_STORAGE_KEY);
-    passwordResetForm.reset();
-    clearFeedback();
+signOutButton.addEventListener("click", async () => {
+    try {
+        await apiRequest("/auth/logout", { method: "POST" });
+    } catch (error) {
+        // Redirect to auth either way.
+    }
     window.location.href = "auth.html";
 });
 
 refreshOrdersButton.addEventListener("click", loadPastOrders);
 
-if (requireAccount()) {
-    renderSummary();
-    loadPastOrders();
+async function bootstrapAccountPage() {
+    try {
+        const data = await apiRequest("/me", { method: "GET" });
+        if (!data?.authenticated || !data.user) {
+            window.location.href = "auth.html";
+            return;
+        }
+        currentUser = data.user;
+        renderSummary(currentUser);
+        loadPastOrders();
+    } catch (error) {
+        window.location.href = "auth.html";
+    }
 }
+
+bootstrapAccountPage();

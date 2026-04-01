@@ -6,14 +6,21 @@ import sqlite3
 import base64
 import hmac
 import hashlib
+from datetime import datetime, UTC
 from pathlib import Path
 from typing import Any
+from secrets import token_urlsafe
+from urllib.parse import urlencode, urlsplit
 from uuid import uuid4
 
-from flask import Flask, jsonify, redirect, request
+import requests
+from flask import Flask, jsonify, redirect, request, session
+from google.auth.transport.requests import Request as GoogleRequest
+from google.oauth2.id_token import verify_oauth2_token
 from square.client import Square
 from square.core.api_error import ApiError
 from square.environment import SquareEnvironment
+from werkzeug.security import check_password_hash, generate_password_hash
 
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "bagelshop.db"
@@ -27,8 +34,25 @@ SQUARE_ENVIRONMENT = os.getenv("SQUARE_ENVIRONMENT", "sandbox")
 SQUARE_WEBHOOK_SIGNATURE_KEY = os.getenv("SQUARE_WEBHOOK_SIGNATURE_KEY", "")
 SQUARE_WEBHOOK_NOTIFICATION_URL = os.getenv("SQUARE_WEBHOOK_NOTIFICATION_URL", "")
 APP_BASE_URL = os.getenv("APP_BASE_URL", "http://127.0.0.1:5000")
+BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL", APP_BASE_URL)
+FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", "http://127.0.0.1:5501/frontend")
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
+GOOGLE_REDIRECT_URI = os.getenv(
+    "GOOGLE_REDIRECT_URI", f"{BACKEND_BASE_URL.rstrip('/')}/auth/google/callback"
+)
+FLASK_SECRET_KEY = os.getenv("FLASK_SECRET_KEY", "dev-secret-change-me")
 SQUARE_ENABLE_CASH_APP_PAY = os.getenv("SQUARE_ENABLE_CASH_APP_PAY", "1")
 SQUARE_ENABLE_ACH_REQUEST = os.getenv("SQUARE_ENABLE_ACH_REQUEST", "1")
+
+FRONTEND_ORIGIN = f"{urlsplit(FRONTEND_BASE_URL).scheme}://{urlsplit(FRONTEND_BASE_URL).netloc}"
+
+app.secret_key = FLASK_SECRET_KEY
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=BACKEND_BASE_URL.startswith("https://"),
+)
 
 
 def get_square_client() -> Square:
@@ -110,6 +134,7 @@ def init_db() -> None:
     try:
         conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
         ensure_orders_schema_columns(conn)
+        ensure_users_schema_columns(conn)
         conn.commit()
     finally:
         conn.close()
@@ -138,10 +163,138 @@ def ensure_orders_schema_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE menu_items ADD COLUMN square_variation_id TEXT")
 
 
+def ensure_users_schema_columns(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            customer_id INTEGER NOT NULL,
+            username TEXT UNIQUE,
+            email TEXT UNIQUE,
+            password_hash TEXT,
+            display_name TEXT NOT NULL DEFAULT '',
+            phone TEXT NOT NULL DEFAULT '',
+            profile_image_url TEXT NOT NULL DEFAULT '',
+            auth_provider TEXT NOT NULL DEFAULT 'local',
+            google_sub TEXT UNIQUE,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE
+        )
+        """
+    )
+
+    user_columns = {
+        row["name"] for row in conn.execute("PRAGMA table_info(users)").fetchall()
+    }
+    for column_name, definition in (
+        ("customer_id", "INTEGER NOT NULL DEFAULT 0"),
+        ("username", "TEXT"),
+        ("email", "TEXT"),
+        ("password_hash", "TEXT"),
+        ("display_name", "TEXT NOT NULL DEFAULT ''"),
+        ("phone", "TEXT NOT NULL DEFAULT ''"),
+        ("profile_image_url", "TEXT NOT NULL DEFAULT ''"),
+        ("auth_provider", "TEXT NOT NULL DEFAULT 'local'"),
+        ("google_sub", "TEXT"),
+        ("created_at", "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP"),
+        ("updated_at", "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP"),
+    ):
+        if column_name not in user_columns:
+            conn.execute(f"ALTER TABLE users ADD COLUMN {column_name} {definition}")
+
+
+def now_iso() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def get_public_user_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
+    if row is None:
+        return None
+
+    return {
+        "id": row["id"],
+        "customer_id": row["customer_id"],
+        "username": row["username"],
+        "email": row["email"],
+        "display_name": row["display_name"],
+        "phone": row["phone"],
+        "profile_image_url": row["profile_image_url"],
+        "auth_provider": row["auth_provider"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+def get_user_by_id(conn: sqlite3.Connection, user_id: int) -> sqlite3.Row | None:
+    return conn.execute(
+        """
+        SELECT id, customer_id, username, email, password_hash, display_name, phone,
+               profile_image_url, auth_provider, google_sub, created_at, updated_at
+        FROM users
+        WHERE id = ?
+        """,
+        (user_id,),
+    ).fetchone()
+
+
+def get_current_user(conn: sqlite3.Connection) -> sqlite3.Row | None:
+    user_id = session.get("user_id")
+    if not user_id:
+        return None
+    return get_user_by_id(conn, int(user_id))
+
+
+def upsert_customer(
+    conn: sqlite3.Connection, *, name: str, email: str = "", phone: str = "", customer_id: int | None = None
+) -> int:
+    if customer_id:
+        conn.execute(
+            "UPDATE customers SET name = ?, email = ?, phone = ? WHERE id = ?",
+            (name, email, phone, customer_id),
+        )
+        return customer_id
+
+    cursor = conn.execute(
+        "INSERT INTO customers (name, email, phone) VALUES (?, ?, ?)",
+        (name, email, phone),
+    )
+    return int(cursor.lastrowid)
+
+
+def frontend_url(page: str, **params: str) -> str:
+    page = page.lstrip("/")
+    url = f"{FRONTEND_BASE_URL.rstrip('/')}/{page}"
+    if params:
+        filtered = {k: v for k, v in params.items() if v}
+        if filtered:
+            url = f"{url}?{urlencode(filtered)}"
+    return url
+
+
+def set_logged_in_user(user_id: int) -> None:
+    session["user_id"] = int(user_id)
+
+
+def clear_logged_in_user() -> None:
+    session.pop("user_id", None)
+    session.pop("google_oauth_state", None)
+
+
+def get_allowed_origin() -> str | None:
+    request_origin = request.headers.get("Origin", "").strip()
+    if request_origin and request_origin == FRONTEND_ORIGIN:
+        return request_origin
+    return None
+
+
 @app.after_request
 def add_cors_headers(response):
-    # Keep CORS open for local dev and static hosting like GitHub Pages.
-    response.headers["Access-Control-Allow-Origin"] = "*"
+    allowed_origin = get_allowed_origin()
+    if allowed_origin:
+        response.headers["Access-Control-Allow-Origin"] = allowed_origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Vary"] = "Origin"
     response.headers["Access-Control-Allow-Headers"] = "Content-Type"
     response.headers["Access-Control-Allow-Methods"] = "GET,POST,OPTIONS"
     return response
@@ -155,6 +308,224 @@ def preflight(_path: str):
 @app.get("/api/health")
 def health_check():
     return jsonify({"status": "ok"})
+
+
+@app.get("/api/me")
+def get_current_session_user():
+    conn = get_db()
+    try:
+        user = get_current_user(conn)
+        if user is None:
+            return jsonify({"authenticated": False, "user": None}), 200
+        return jsonify({"authenticated": True, "user": get_public_user_dict(user)}), 200
+    finally:
+        conn.close()
+
+
+@app.post("/api/auth/register")
+def register_local_user():
+    data = request.get_json(silent=True) or {}
+    username = str(data.get("username", "")).strip()
+    email = str(data.get("email", "")).strip().lower()
+    password = str(data.get("password", ""))
+
+    if not username:
+        return jsonify({"error": "username is required"}), 400
+    if len(password) < 6:
+        return jsonify({"error": "password must be at least 6 characters"}), 400
+
+    conn = get_db()
+    try:
+        existing = conn.execute(
+            "SELECT id FROM users WHERE username = ? OR (? <> '' AND email = ?)",
+            (username, email, email),
+        ).fetchone()
+        if existing is not None:
+            return jsonify({"error": "An account with that username or email already exists"}), 409
+
+        customer_id = upsert_customer(conn, name=username, email=email)
+        cursor = conn.execute(
+            """
+            INSERT INTO users (
+                customer_id, username, email, password_hash, display_name, phone,
+                profile_image_url, auth_provider, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, '', '', 'local', ?)
+            """,
+            (
+                customer_id,
+                username,
+                email or None,
+                generate_password_hash(password),
+                username,
+                now_iso(),
+            ),
+        )
+        user_id = int(cursor.lastrowid)
+        conn.commit()
+        user = get_user_by_id(conn, user_id)
+    finally:
+        conn.close()
+
+    set_logged_in_user(user_id)
+    return jsonify({"authenticated": True, "user": get_public_user_dict(user)}), 201
+
+
+@app.post("/api/auth/login")
+def login_local_user():
+    data = request.get_json(silent=True) or {}
+    username_or_email = str(data.get("username", "")).strip()
+    password = str(data.get("password", ""))
+
+    if not username_or_email or not password:
+        return jsonify({"error": "username and password are required"}), 400
+
+    conn = get_db()
+    try:
+        user = conn.execute(
+            """
+            SELECT id, customer_id, username, email, password_hash, display_name, phone,
+                   profile_image_url, auth_provider, google_sub, created_at, updated_at
+            FROM users
+            WHERE username = ? OR email = ?
+            LIMIT 1
+            """,
+            (username_or_email, username_or_email.lower()),
+        ).fetchone()
+        if user is None or not user["password_hash"] or not check_password_hash(user["password_hash"], password):
+            return jsonify({"error": "Incorrect username/email or password"}), 401
+    finally:
+        conn.close()
+
+    set_logged_in_user(int(user["id"]))
+    return jsonify({"authenticated": True, "user": get_public_user_dict(user)}), 200
+
+
+@app.post("/api/auth/logout")
+def logout_user():
+    clear_logged_in_user()
+    return jsonify({"ok": True}), 200
+
+
+@app.get("/auth/google/start")
+def start_google_auth():
+    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+        return redirect(frontend_url("auth.html", error="google_not_configured"))
+
+    state = token_urlsafe(24)
+    session["google_oauth_state"] = state
+    google_params = {
+        "client_id": GOOGLE_CLIENT_ID,
+        "redirect_uri": GOOGLE_REDIRECT_URI,
+        "response_type": "code",
+        "scope": "openid email profile",
+        "state": state,
+        "access_type": "offline",
+        "include_granted_scopes": "true",
+        "prompt": "select_account",
+    }
+    return redirect(f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(google_params)}")
+
+
+@app.get("/auth/google/callback")
+def finish_google_auth():
+    if request.args.get("error"):
+        return redirect(frontend_url("auth.html", error=request.args.get("error", "google_auth_failed")))
+
+    state = request.args.get("state", "")
+    if not state or state != session.get("google_oauth_state"):
+        clear_logged_in_user()
+        return redirect(frontend_url("auth.html", error="invalid_google_state"))
+
+    code = request.args.get("code", "")
+    if not code:
+        return redirect(frontend_url("auth.html", error="missing_google_code"))
+
+    try:
+        token_response = requests.post(
+            "https://oauth2.googleapis.com/token",
+            data={
+                "code": code,
+                "client_id": GOOGLE_CLIENT_ID,
+                "client_secret": GOOGLE_CLIENT_SECRET,
+                "redirect_uri": GOOGLE_REDIRECT_URI,
+                "grant_type": "authorization_code",
+            },
+            timeout=20,
+        )
+        token_response.raise_for_status()
+        token_data = token_response.json()
+        id_info = verify_oauth2_token(
+            token_data.get("id_token", ""), GoogleRequest(), GOOGLE_CLIENT_ID
+        )
+    except Exception:
+        clear_logged_in_user()
+        return redirect(frontend_url("auth.html", error="google_token_exchange_failed"))
+
+    google_sub = str(id_info.get("sub", "")).strip()
+    email = str(id_info.get("email", "")).strip().lower()
+    display_name = str(id_info.get("name", "")).strip() or "Google User"
+    picture = str(id_info.get("picture", "")).strip()
+    if not google_sub or not email:
+        clear_logged_in_user()
+        return redirect(frontend_url("auth.html", error="google_profile_incomplete"))
+
+    conn = get_db()
+    try:
+        user = conn.execute(
+            """
+            SELECT id, customer_id, username, email, password_hash, display_name, phone,
+                   profile_image_url, auth_provider, google_sub, created_at, updated_at
+            FROM users
+            WHERE google_sub = ? OR email = ?
+            ORDER BY CASE WHEN google_sub = ? THEN 0 ELSE 1 END
+            LIMIT 1
+            """,
+            (google_sub, email, google_sub),
+        ).fetchone()
+
+        if user is None:
+            customer_id = upsert_customer(conn, name=display_name, email=email)
+            cursor = conn.execute(
+                """
+                INSERT INTO users (
+                    customer_id, username, email, display_name, phone, profile_image_url,
+                    auth_provider, google_sub, updated_at
+                )
+                VALUES (?, ?, ?, ?, '', ?, 'google', ?, ?)
+                """,
+                (
+                    customer_id,
+                    email.split("@", 1)[0],
+                    email,
+                    display_name,
+                    picture,
+                    google_sub,
+                    now_iso(),
+                ),
+            )
+            user_id = int(cursor.lastrowid)
+        else:
+            customer_id = int(user["customer_id"])
+            upsert_customer(conn, customer_id=customer_id, name=display_name, email=email, phone=user["phone"])
+            conn.execute(
+                """
+                UPDATE users
+                SET email = ?, display_name = ?, profile_image_url = ?,
+                    auth_provider = 'google', google_sub = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (email, display_name, picture, google_sub, now_iso(), user["id"]),
+            )
+            user_id = int(user["id"])
+
+        conn.commit()
+    finally:
+        conn.close()
+
+    set_logged_in_user(user_id)
+    session.pop("google_oauth_state", None)
+    return redirect(frontend_url("account.html"))
 
 
 @app.get("/api/square/catalog/items")
@@ -494,6 +865,148 @@ def create_customer():
         conn.close()
 
     return jsonify(dict(row)), 201
+
+
+@app.post("/api/me")
+def update_current_user_profile():
+    data = request.get_json(silent=True) or {}
+
+    conn = get_db()
+    try:
+        user = get_current_user(conn)
+        if user is None:
+            return jsonify({"error": "Authentication required"}), 401
+
+        display_name = str(data.get("display_name", user["display_name"] or "")).strip()
+        username = str(data.get("username", user["username"] or "")).strip()
+        email = str(data.get("email", user["email"] or "")).strip().lower()
+        phone = str(data.get("phone", user["phone"] or "")).strip()
+        profile_image_url = str(
+            data.get("profile_image_url", user["profile_image_url"] or "")
+        ).strip()
+
+        if not display_name:
+            display_name = username or user["display_name"] or "Account"
+
+        if username:
+            username_owner = conn.execute(
+                "SELECT id FROM users WHERE username = ? AND id <> ?",
+                (username, user["id"]),
+            ).fetchone()
+            if username_owner is not None:
+                return jsonify({"error": "That username is already taken"}), 409
+
+        if email:
+            email_owner = conn.execute(
+                "SELECT id FROM users WHERE email = ? AND id <> ?",
+                (email, user["id"]),
+            ).fetchone()
+            if email_owner is not None:
+                return jsonify({"error": "That email is already in use"}), 409
+
+        conn.execute(
+            """
+            UPDATE users
+            SET username = ?, email = ?, display_name = ?, phone = ?,
+                profile_image_url = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                username or None,
+                email or None,
+                display_name,
+                phone,
+                profile_image_url,
+                now_iso(),
+                user["id"],
+            ),
+        )
+        upsert_customer(
+            conn,
+            customer_id=int(user["customer_id"]),
+            name=display_name,
+            email=email,
+            phone=phone,
+        )
+        conn.commit()
+        updated_user = get_user_by_id(conn, int(user["id"]))
+    finally:
+        conn.close()
+
+    return jsonify({"user": get_public_user_dict(updated_user)}), 200
+
+
+@app.post("/api/me/password")
+def update_current_user_password():
+    data = request.get_json(silent=True) or {}
+    current_password = str(data.get("current_password", ""))
+    new_password = str(data.get("new_password", ""))
+
+    if len(new_password) < 6:
+        return jsonify({"error": "New password must be at least 6 characters"}), 400
+
+    conn = get_db()
+    try:
+        user = get_current_user(conn)
+        if user is None:
+            return jsonify({"error": "Authentication required"}), 401
+        if user["auth_provider"] != "local":
+            return jsonify({"error": "Google accounts do not use a local password"}), 400
+        if not user["password_hash"] or not check_password_hash(
+            user["password_hash"], current_password
+        ):
+            return jsonify({"error": "Current password is incorrect"}), 401
+
+        conn.execute(
+            "UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?",
+            (generate_password_hash(new_password), now_iso(), user["id"]),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    return jsonify({"ok": True}), 200
+
+
+@app.get("/api/my/orders")
+def get_my_orders():
+    conn = get_db()
+    try:
+        user = get_current_user(conn)
+        if user is None:
+            return jsonify({"error": "Authentication required"}), 401
+
+        order_rows = conn.execute(
+            """
+            SELECT id, customer_id, status, total_cents, notes, payment_status,
+                   square_payment_id, created_at
+            FROM orders
+            WHERE customer_id = ?
+            ORDER BY id DESC
+            """,
+            (user["customer_id"],),
+        ).fetchall()
+
+        orders = []
+        for order in order_rows:
+            item_rows = conn.execute(
+                """
+                SELECT oi.id, oi.order_id, oi.menu_item_id, oi.quantity,
+                       oi.unit_price_cents, oi.line_total_cents, mi.name AS menu_item_name
+                FROM order_items oi
+                JOIN menu_items mi ON mi.id = oi.menu_item_id
+                WHERE oi.order_id = ?
+                ORDER BY oi.id ASC
+                """,
+                (order["id"],),
+            ).fetchall()
+            order_dict = dict(order)
+            order_dict["items"] = [dict(item) for item in item_rows]
+            orders.append(order_dict)
+    finally:
+        conn.close()
+
+    return jsonify(orders), 200
 
 
 @app.get("/api/orders")

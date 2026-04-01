@@ -60,6 +60,12 @@ Set these before running backend:
 - `SQUARE_ENABLE_CASH_APP_PAY` (`1`/`0`)
 - `SQUARE_ENABLE_ACH_REQUEST` (`1`/`0`, request flag only)
 - `APP_BASE_URL` (ex: `http://127.0.0.1:5000`)
+- `BACKEND_BASE_URL` (ex: `http://127.0.0.1:5000`)
+- `FRONTEND_BASE_URL` (ex: `http://127.0.0.1:5501/frontend`)
+- `FLASK_SECRET_KEY` (required for signed session cookies)
+- `GOOGLE_CLIENT_ID`
+- `GOOGLE_CLIENT_SECRET`
+- `GOOGLE_REDIRECT_URI` (ex: `http://127.0.0.1:5000/auth/google/callback`)
 
 Use `backend/.env.example` as reference.
 
@@ -84,6 +90,12 @@ $env:SQUARE_WEBHOOK_NOTIFICATION_URL = "https://YOUR-NGROK.ngrok-free.app/webhoo
 $env:SQUARE_ENABLE_CASH_APP_PAY = "1"
 $env:SQUARE_ENABLE_ACH_REQUEST = "1"
 $env:APP_BASE_URL = "http://127.0.0.1:5000"
+$env:BACKEND_BASE_URL = "http://127.0.0.1:5000"
+$env:FRONTEND_BASE_URL = "http://127.0.0.1:5501/frontend"
+$env:FLASK_SECRET_KEY = "CHANGE_ME_TO_A_LONG_RANDOM_SECRET"
+$env:GOOGLE_CLIENT_ID = "YOUR_GOOGLE_CLIENT_ID"
+$env:GOOGLE_CLIENT_SECRET = "YOUR_GOOGLE_CLIENT_SECRET"
+$env:GOOGLE_REDIRECT_URI = "http://127.0.0.1:5000/auth/google/callback"
 
 python app.py
 ```
@@ -136,6 +148,13 @@ Then:
 Base API: `http://127.0.0.1:5000/api`
 
 - `GET /api/health`
+- `GET /api/me`
+- `POST /api/auth/register`
+- `POST /api/auth/login`
+- `POST /api/auth/logout`
+- `POST /api/me`
+- `POST /api/me/password`
+- `GET /api/my/orders`
 - `GET /api/menu`
 - `POST /api/menu`
 - `GET /api/customers`
@@ -148,6 +167,8 @@ Base API: `http://127.0.0.1:5000/api`
 
 Non-API routes:
 
+- `GET /auth/google/start`
+- `GET /auth/google/callback`
 - `POST /checkout` (creates Square checkout, redirects browser)
 - `POST /webhooks/square`
 
