@@ -7,6 +7,7 @@ const menuStatus = document.getElementById("menu-status");
 const refreshMenuButton = document.getElementById("refresh-menu");
 const accountLinks = document.querySelectorAll(".account-link");
 const headerProfileImage = document.getElementById("header-profile-image");
+const headerAccountLabel = document.getElementById("header-account-label");
 const headerAccountStatus = document.getElementById("header-account-status");
 
 function moneyFromCents(cents) {
@@ -41,8 +42,12 @@ function updateHeaderAccountState(account) {
         headerProfileImage.src = profileImageUrl;
     }
 
+    if (headerAccountLabel) {
+        headerAccountLabel.textContent = account ? "Account" : "Sign In";
+    }
+
     if (headerAccountStatus) {
-        headerAccountStatus.textContent = account ? label : "Create or sign in";
+        headerAccountStatus.textContent = account ? label : "Continue with Google or a local account";
     }
 }
 

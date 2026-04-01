@@ -7,6 +7,7 @@ import base64
 import hmac
 import hashlib
 from datetime import datetime, UTC
+from functools import wraps
 from pathlib import Path
 from typing import Any
 from secrets import token_urlsafe
@@ -15,8 +16,6 @@ from uuid import uuid4
 
 import requests
 from flask import Flask, jsonify, redirect, request, session
-from google.auth.transport.requests import Request as GoogleRequest
-from google.oauth2.id_token import verify_oauth2_token
 from square.client import Square
 from square.core.api_error import ApiError
 from square.environment import SquareEnvironment
@@ -44,6 +43,9 @@ GOOGLE_REDIRECT_URI = os.getenv(
 FLASK_SECRET_KEY = os.getenv("FLASK_SECRET_KEY", "dev-secret-change-me")
 SQUARE_ENABLE_CASH_APP_PAY = os.getenv("SQUARE_ENABLE_CASH_APP_PAY", "1")
 SQUARE_ENABLE_ACH_REQUEST = os.getenv("SQUARE_ENABLE_ACH_REQUEST", "1")
+GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
+GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
 
 FRONTEND_ORIGIN = f"{urlsplit(FRONTEND_BASE_URL).scheme}://{urlsplit(FRONTEND_BASE_URL).netloc}"
 
@@ -120,6 +122,11 @@ def normalize_square_catalog_item(item: Any) -> dict[str, Any]:
         "price_cents": price_cents,
         "variation_id": variation_id,
     }
+
+
+def is_safe_absolute_http_url(value: str) -> bool:
+    parts = urlsplit(value)
+    return parts.scheme in {"http", "https"} and bool(parts.netloc)
 
 
 def get_db() -> sqlite3.Connection:
@@ -226,6 +233,18 @@ def get_public_user_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
     }
 
 
+def get_session_user_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
+    if row is None:
+        return None
+
+    return {
+        "id": row["id"],
+        "email": row["email"],
+        "name": row["display_name"] or row["username"] or row["email"] or "",
+        "picture": row["profile_image_url"] or "",
+    }
+
+
 def get_user_by_id(conn: sqlite3.Connection, user_id: int) -> sqlite3.Row | None:
     return conn.execute(
         """
@@ -263,6 +282,9 @@ def upsert_customer(
 
 
 def frontend_url(page: str, **params: str) -> str:
+    if not is_safe_absolute_http_url(FRONTEND_BASE_URL):
+        raise ValueError("FRONTEND_BASE_URL must be an absolute http(s) URL")
+
     page = page.lstrip("/")
     url = f"{FRONTEND_BASE_URL.rstrip('/')}/{page}"
     if params:
@@ -272,13 +294,36 @@ def frontend_url(page: str, **params: str) -> str:
     return url
 
 
-def set_logged_in_user(user_id: int) -> None:
+def frontend_redirect(page: str, **params: str):
+    try:
+        return redirect(frontend_url(page, **params))
+    except ValueError:
+        return jsonify({"error": "Invalid FRONTEND_BASE_URL configuration"}), 500
+
+
+def set_logged_in_user(user_id: int, user: sqlite3.Row | None = None) -> None:
     session["user_id"] = int(user_id)
+    session_user = get_session_user_dict(user)
+    if session_user is not None:
+        session["user"] = session_user
 
 
 def clear_logged_in_user() -> None:
     session.pop("user_id", None)
+    session.pop("user", None)
     session.pop("google_oauth_state", None)
+
+
+def login_required(view_func):
+    @wraps(view_func)
+    def wrapped(*args, **kwargs):
+        if session.get("user_id"):
+            return view_func(*args, **kwargs)
+        if request.path.startswith("/api/"):
+            return jsonify({"error": "Authentication required"}), 401
+        return redirect("/login")
+
+    return wrapped
 
 
 def get_allowed_origin() -> str | None:
@@ -320,6 +365,17 @@ def get_current_session_user():
         return jsonify({"authenticated": True, "user": get_public_user_dict(user)}), 200
     finally:
         conn.close()
+
+
+@app.get("/login")
+def login_page():
+    return frontend_redirect("auth.html")
+
+
+@app.get("/logout")
+def logout_page():
+    clear_logged_in_user()
+    return frontend_redirect("index.html")
 
 
 @app.post("/api/auth/register")
@@ -367,7 +423,7 @@ def register_local_user():
     finally:
         conn.close()
 
-    set_logged_in_user(user_id)
+    set_logged_in_user(user_id, user)
     return jsonify({"authenticated": True, "user": get_public_user_dict(user)}), 201
 
 
@@ -394,10 +450,11 @@ def login_local_user():
         ).fetchone()
         if user is None or not user["password_hash"] or not check_password_hash(user["password_hash"], password):
             return jsonify({"error": "Incorrect username/email or password"}), 401
+        authenticated_user = user
     finally:
         conn.close()
 
-    set_logged_in_user(int(user["id"]))
+    set_logged_in_user(int(authenticated_user["id"]), authenticated_user)
     return jsonify({"authenticated": True, "user": get_public_user_dict(user)}), 200
 
 
@@ -410,7 +467,9 @@ def logout_user():
 @app.get("/auth/google/start")
 def start_google_auth():
     if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
-        return redirect(frontend_url("auth.html", error="google_not_configured"))
+        return frontend_redirect("auth.html", error="google_not_configured")
+    if not is_safe_absolute_http_url(GOOGLE_REDIRECT_URI):
+        return frontend_redirect("auth.html", error="google_redirect_uri_invalid")
 
     state = token_urlsafe(24)
     session["google_oauth_state"] = state
@@ -421,29 +480,28 @@ def start_google_auth():
         "scope": "openid email profile",
         "state": state,
         "access_type": "offline",
-        "include_granted_scopes": "true",
-        "prompt": "select_account",
+        "prompt": "consent",
     }
-    return redirect(f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(google_params)}")
+    return redirect(f"{GOOGLE_AUTH_URL}?{urlencode(google_params)}")
 
 
 @app.get("/auth/google/callback")
 def finish_google_auth():
     if request.args.get("error"):
-        return redirect(frontend_url("auth.html", error=request.args.get("error", "google_auth_failed")))
+        return frontend_redirect("auth.html", error=request.args.get("error", "google_auth_failed"))
 
     state = request.args.get("state", "")
     if not state or state != session.get("google_oauth_state"):
         clear_logged_in_user()
-        return redirect(frontend_url("auth.html", error="invalid_google_state"))
+        return frontend_redirect("auth.html", error="invalid_google_state")
 
     code = request.args.get("code", "")
     if not code:
-        return redirect(frontend_url("auth.html", error="missing_google_code"))
+        return frontend_redirect("auth.html", error="missing_google_code")
 
     try:
         token_response = requests.post(
-            "https://oauth2.googleapis.com/token",
+            GOOGLE_TOKEN_URL,
             data={
                 "code": code,
                 "client_id": GOOGLE_CLIENT_ID,
@@ -455,20 +513,28 @@ def finish_google_auth():
         )
         token_response.raise_for_status()
         token_data = token_response.json()
-        id_info = verify_oauth2_token(
-            token_data.get("id_token", ""), GoogleRequest(), GOOGLE_CLIENT_ID
-        )
-    except Exception:
-        clear_logged_in_user()
-        return redirect(frontend_url("auth.html", error="google_token_exchange_failed"))
+        access_token = str(token_data.get("access_token", "")).strip()
+        if not access_token:
+            raise ValueError("missing access_token")
 
-    google_sub = str(id_info.get("sub", "")).strip()
-    email = str(id_info.get("email", "")).strip().lower()
-    display_name = str(id_info.get("name", "")).strip() or "Google User"
-    picture = str(id_info.get("picture", "")).strip()
+        userinfo_response = requests.get(
+            GOOGLE_USERINFO_URL,
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=20,
+        )
+        userinfo_response.raise_for_status()
+        userinfo = userinfo_response.json()
+    except (requests.RequestException, ValueError, TypeError):
+        clear_logged_in_user()
+        return frontend_redirect("auth.html", error="google_token_exchange_failed")
+
+    google_sub = str(userinfo.get("sub", "")).strip()
+    email = str(userinfo.get("email", "")).strip().lower()
+    display_name = str(userinfo.get("name", "")).strip() or "Google User"
+    picture = str(userinfo.get("picture", "")).strip()
     if not google_sub or not email:
         clear_logged_in_user()
-        return redirect(frontend_url("auth.html", error="google_profile_incomplete"))
+        return frontend_redirect("auth.html", error="google_profile_incomplete")
 
     conn = get_db()
     try:
@@ -496,7 +562,7 @@ def finish_google_auth():
                 """,
                 (
                     customer_id,
-                    email.split("@", 1)[0],
+                    None,
                     email,
                     display_name,
                     picture,
@@ -520,12 +586,13 @@ def finish_google_auth():
             user_id = int(user["id"])
 
         conn.commit()
+        authenticated_user = get_user_by_id(conn, user_id)
     finally:
         conn.close()
 
-    set_logged_in_user(user_id)
+    set_logged_in_user(user_id, authenticated_user)
     session.pop("google_oauth_state", None)
-    return redirect(frontend_url("account.html"))
+    return frontend_redirect("account.html")
 
 
 @app.get("/api/square/catalog/items")
@@ -868,6 +935,7 @@ def create_customer():
 
 
 @app.post("/api/me")
+@login_required
 def update_current_user_profile():
     data = request.get_json(silent=True) or {}
 
@@ -875,6 +943,7 @@ def update_current_user_profile():
     try:
         user = get_current_user(conn)
         if user is None:
+            clear_logged_in_user()
             return jsonify({"error": "Authentication required"}), 401
 
         display_name = str(data.get("display_name", user["display_name"] or "")).strip()
@@ -937,6 +1006,7 @@ def update_current_user_profile():
 
 
 @app.post("/api/me/password")
+@login_required
 def update_current_user_password():
     data = request.get_json(silent=True) or {}
     current_password = str(data.get("current_password", ""))
@@ -949,6 +1019,7 @@ def update_current_user_password():
     try:
         user = get_current_user(conn)
         if user is None:
+            clear_logged_in_user()
             return jsonify({"error": "Authentication required"}), 401
         if user["auth_provider"] != "local":
             return jsonify({"error": "Google accounts do not use a local password"}), 400
@@ -969,11 +1040,13 @@ def update_current_user_password():
 
 
 @app.get("/api/my/orders")
+@login_required
 def get_my_orders():
     conn = get_db()
     try:
         user = get_current_user(conn)
         if user is None:
+            clear_logged_in_user()
             return jsonify({"error": "Authentication required"}), 401
 
         order_rows = conn.execute(

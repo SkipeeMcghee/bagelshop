@@ -1,9 +1,10 @@
-# Bagel Shop Webapp (Flask + SQLite + Square Checkout)
+# Bagel Shop Webapp (Flask + SQLite + Square Checkout + Google Login)
 
 This is a minimal split architecture:
 
 - `frontend/` is static (good for GitHub Pages).
 - `backend/` is Flask + SQLite + Square Python SDK.
+- Google OAuth2 + OpenID Connect login is handled directly with Flask, `requests`, and built-in modules.
 
 ## Project Structure
 
@@ -34,6 +35,23 @@ bagelshop/
 - Square Catalog routes:
   - `GET /api/square/catalog/items`
   - `POST /api/square/catalog/sync`
+
+## Google Login
+
+The backend implements the Google OAuth2 authorization code flow directly:
+
+- `GET /auth/google/start`
+  - redirects the browser to Google with `scope=openid email profile`
+- `GET /auth/google/callback`
+  - exchanges the authorization code for tokens
+  - requests profile data from Google userinfo
+  - creates or updates the local user and stores the login in the Flask session
+- `GET /login`
+  - redirects to the frontend sign-in page
+- `GET /logout`
+  - clears the Flask session and redirects to the frontend home page
+
+No additional Google auth library is required.
 
 ## SQLite Schema
 
@@ -103,11 +121,27 @@ python app.py
 ### 2) Frontend
 
 ```powershell
-cd ..\frontend
-python -m http.server 5500
+cd ..
+python -m http.server 5501
 ```
 
-Open `http://127.0.0.1:5500`.
+Open `http://127.0.0.1:5501/frontend/`.
+
+### 3) Google OAuth setup
+
+Create a Google OAuth client in Google Cloud Console and configure:
+
+- Authorized redirect URI:
+  - `http://127.0.0.1:5000/auth/google/callback`
+- JavaScript origins are not required for this backend-driven flow.
+
+Then set these environment variables before starting Flask:
+
+```powershell
+$env:GOOGLE_CLIENT_ID = "YOUR_GOOGLE_CLIENT_ID"
+$env:GOOGLE_CLIENT_SECRET = "YOUR_GOOGLE_CLIENT_SECRET"
+$env:GOOGLE_REDIRECT_URI = "http://127.0.0.1:5000/auth/google/callback"
+```
 
 ## Testing Checkout Flow
 
@@ -169,6 +203,8 @@ Non-API routes:
 
 - `GET /auth/google/start`
 - `GET /auth/google/callback`
+- `GET /login`
+- `GET /logout`
 - `POST /checkout` (creates Square checkout, redirects browser)
 - `POST /webhooks/square`
 

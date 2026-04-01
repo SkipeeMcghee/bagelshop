@@ -220,12 +220,7 @@ passwordResetForm.addEventListener("submit", async (event) => {
 });
 
 signOutButton.addEventListener("click", async () => {
-    try {
-        await apiRequest("/auth/logout", { method: "POST" });
-    } catch (error) {
-        // Redirect to auth either way.
-    }
-    window.location.href = "auth.html";
+    window.location.href = `${BACKEND_BASE}/logout`;
 });
 
 refreshOrdersButton.addEventListener("click", loadPastOrders);

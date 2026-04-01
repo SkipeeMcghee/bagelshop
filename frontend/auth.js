@@ -63,6 +63,7 @@ function showOAuthErrorFromUrl() {
 
     const messages = {
         google_not_configured: "Google sign-in is not configured yet on the backend.",
+        google_redirect_uri_invalid: "The backend Google redirect URI is not configured correctly.",
         invalid_google_state: "The Google sign-in session expired. Please try again.",
         missing_google_code: "Google did not return an authorization code.",
         google_token_exchange_failed: "Google sign-in failed during token exchange.",
