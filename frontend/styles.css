@@ -1,0 +1,90 @@
+:root {
+    --bg: #ffffff;
+    --ink: #1a2e22;
+    --accent: #2e7d5e;
+    --accent-secondary: #2a6496;
+    --panel: #f0f7f4;
+    --border: #b2d8c8;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+    color: var(--ink);
+    background: #ffffff;
+}
+
+.container {
+    max-width: 820px;
+    margin: 0 auto;
+    padding: 24px 16px 48px;
+}
+
+.header-brand {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+.site-logo {
+    height: 72px;
+    width: auto;
+    flex-shrink: 0;
+}
+
+header h1 {
+    margin-bottom: 4px;
+}
+
+header p {
+    margin: 0;
+}
+
+.panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    margin-top: 18px;
+}
+
+ul {
+    padding-left: 18px;
+}
+
+form {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+}
+
+input,
+button {
+    padding: 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    font: inherit;
+}
+
+button {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    cursor: pointer;
+}
+
+button:hover {
+    background: #235f47;
+}
+
+#refresh-menu {
+    background: var(--accent-secondary);
+}
+
+#refresh-menu:hover {
+    background: #1e4e72;
+}
