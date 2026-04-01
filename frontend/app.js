@@ -1,109 +1,109 @@
 const API_BASE = "http://127.0.0.1:5000/api";
+const ACCOUNT_STORAGE_KEY = "bagelshopAccount";
+const DEFAULT_PROFILE_IMAGE = "../assets/images/profilepicblank.png";
 
 const menuList = document.getElementById("menu-list");
-const customerForm = document.getElementById("customer-form");
-const customerResult = document.getElementById("customer-result");
-const orderForm = document.getElementById("order-form");
-const orderResult = document.getElementById("order-result");
-const checkoutForm = document.getElementById("checkout-form");
+const menuStatus = document.getElementById("menu-status");
 const refreshMenuButton = document.getElementById("refresh-menu");
+const accountLinks = document.querySelectorAll(".account-link");
+const headerProfileImage = document.getElementById("header-profile-image");
+const headerAccountStatus = document.getElementById("header-account-status");
 
 function moneyFromCents(cents) {
-    return `$${(cents / 100).toFixed(2)}`;
+    return `$${(Number(cents) / 100).toFixed(2)}`;
+}
+
+function getSavedAccount() {
+    try {
+        const raw = localStorage.getItem(ACCOUNT_STORAGE_KEY);
+        return raw ? JSON.parse(raw) : null;
+    } catch (error) {
+        return null;
+    }
+}
+
+function updateHeaderAccountState() {
+    const account = getSavedAccount();
+    const profileImageUrl = account?.profileImageUrl || DEFAULT_PROFILE_IMAGE;
+    const label = account?.displayName || account?.username || "Create or sign in";
+    const destination = account ? "account.html" : "auth.html";
+
+    for (const link of accountLinks) {
+        link.href = destination;
+    }
+
+    if (headerProfileImage) {
+        headerProfileImage.src = profileImageUrl;
+    }
+
+    if (headerAccountStatus) {
+        headerAccountStatus.textContent = account ? label : "Create or sign in";
+    }
+}
+
+function createMenuCard(item) {
+    const article = document.createElement("article");
+    article.className = "menu-card";
+
+    const header = document.createElement("div");
+    header.className = "menu-card-header";
+
+    const titleBlock = document.createElement("div");
+    const title = document.createElement("h3");
+    title.textContent = item.name;
+    const description = document.createElement("p");
+    description.textContent = item.description || "Freshly prepared and ready to order.";
+    titleBlock.append(title, description);
+
+    const price = document.createElement("span");
+    price.className = "price-pill";
+    price.textContent = moneyFromCents(item.price_cents);
+
+    header.append(titleBlock, price);
+
+    const availability = document.createElement("span");
+    availability.className = `availability-pill${item.is_available ? "" : " unavailable"}`;
+    availability.textContent = item.is_available ? "Available now" : "Currently unavailable";
+
+    article.append(header, availability);
+    return article;
 }
 
 async function fetchMenu() {
-    menuList.innerHTML = "<li>Loading menu...</li>";
+    menuStatus.textContent = "Loading menu...";
+    menuList.innerHTML = "";
 
     try {
         const response = await fetch(`${API_BASE}/menu`);
         const items = await response.json();
 
+        if (!response.ok) {
+            throw new Error(items?.error || "request failed");
+        }
+
         if (!Array.isArray(items) || items.length === 0) {
-            menuList.innerHTML = "<li>No menu items yet.</li>";
+            menuStatus.textContent = "No menu items yet.";
+            menuList.innerHTML = '<div class="empty-state">The menu is still empty. Seed or add menu items from the backend first.</div>';
             return;
         }
 
-        menuList.innerHTML = "";
+        menuStatus.textContent = `${items.length} item${items.length === 1 ? "" : "s"} available.`;
         for (const item of items) {
-            const li = document.createElement("li");
-            li.textContent = `#${item.id} - ${item.name} (${moneyFromCents(item.price_cents)}): ${item.description}`;
-            menuList.appendChild(li);
+            menuList.appendChild(createMenuCard(item));
         }
     } catch (error) {
-        menuList.innerHTML = `<li>Could not load menu: ${error}</li>`;
+        menuStatus.textContent = "Could not load the menu.";
+        menuList.innerHTML = `<div class="empty-state">${error}</div>`;
     }
 }
 
-customerForm.addEventListener("submit", async (event) => {
-    event.preventDefault();
-
-    const formData = new FormData(customerForm);
-    const payload = {
-        name: formData.get("name"),
-        email: formData.get("email"),
-        phone: formData.get("phone"),
-    };
-
-    try {
-        const response = await fetch(`${API_BASE}/customers`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
-        });
-        const data = await response.json();
-
-        if (!response.ok) {
-            customerResult.textContent = `Error: ${data.error || "request failed"}`;
-            return;
-        }
-
-        customerResult.textContent = `Customer saved with ID ${data.id}`;
-        customerForm.reset();
-    } catch (error) {
-        customerResult.textContent = `Error: ${error}`;
-    }
-});
-
-orderForm.addEventListener("submit", async (event) => {
-    event.preventDefault();
-
-    const formData = new FormData(orderForm);
-    const payload = {
-        customer_id: Number(formData.get("customer_id")),
-        notes: formData.get("notes"),
-        items: [
-            {
-                menu_item_id: Number(formData.get("menu_item_id")),
-                quantity: Number(formData.get("quantity")),
-            },
-        ],
-    };
-
-    try {
-        const response = await fetch(`${API_BASE}/orders`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
-        });
-        const data = await response.json();
-
-        if (!response.ok) {
-            orderResult.textContent = `Error: ${data.error || "request failed"}`;
-            return;
-        }
-
-        orderResult.textContent = `Order #${data.id} placed. Total: ${moneyFromCents(data.total_cents)}`;
-        orderForm.reset();
-    } catch (error) {
-        orderResult.textContent = `Error: ${error}`;
-    }
-});
-
-refreshMenuButton.addEventListener("click", fetchMenu);
-
-if (checkoutForm) {
-    checkoutForm.action = `${API_BASE.replace("/api", "")}/checkout`;
+if (refreshMenuButton) {
+    refreshMenuButton.addEventListener("click", fetchMenu);
 }
+window.addEventListener("storage", updateHeaderAccountState);
 
-fetchMenu();
+updateHeaderAccountState();
+
+if (menuList && menuStatus && refreshMenuButton) {
+    fetchMenu();
+}

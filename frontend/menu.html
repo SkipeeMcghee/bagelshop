@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Everything Bagelry — Menu</title>
+    <link rel="icon" type="image/png" href="../assets/images/BagelryLogo.png" />
+    <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+    <main class="container">
+        <header class="site-header">
+            <div class="header-brand">
+                <a href="index.html" aria-label="Go to home page">
+                    <img src="../assets/images/BagelryLogo.png" alt="Everything Bagelry logo" class="site-logo" />
+                </a>
+                <div>
+                    <h1>Everything Bagelry</h1>
+                    <p>Fresh bagels, house-made spreads, and a cleaner ordering experience.</p>
+                </div>
+            </div>
+            <div class="header-actions">
+                <a class="account-button account-link" href="auth.html" aria-label="Open sign in or account page">
+                    <img
+                        src="../assets/images/profilepicblank.png"
+                        alt="Account profile"
+                        class="account-avatar"
+                        id="header-profile-image"
+                    />
+                    <span class="account-button-copy">
+                        <span class="account-button-label">Account</span>
+                        <span class="account-button-status" id="header-account-status">Create or sign in</span>
+                    </span>
+                </a>
+            </div>
+        </header>
+
+        <section class="panel menu-panel">
+            <div class="section-heading">
+                <div>
+                    <p class="eyebrow">Today&apos;s menu</p>
+                    <h2>Freshly baked favorites</h2>
+                </div>
+                <button id="refresh-menu" type="button">Refresh Menu</button>
+            </div>
+            <p class="section-subtitle" id="menu-status">Loading menu...</p>
+            <div id="menu-list" class="menu-grid" aria-live="polite"></div>
+        </section>
+    </main>
+
+    <script src="app.js"></script>
+</body>
+</html>

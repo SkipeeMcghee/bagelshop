@@ -8,59 +8,40 @@
     <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-    <main class="container">
-        <header>
+    <main class="container landing-page">
+        <header class="site-header">
             <div class="header-brand">
                 <img src="../assets/images/BagelryLogo.png" alt="Everything Bagelry logo" class="site-logo" />
                 <div>
                     <h1>Everything Bagelry</h1>
-                    <p>Fresh bagels, spreads, and simple online ordering.</p>
+                    <p>Fresh bagels, good coffee, and simple online ordering.</p>
                 </div>
             </div>
+            <a class="account-button account-link" href="auth.html" aria-label="Open sign in or account page">
+                <img
+                    src="../assets/images/profilepicblank.png"
+                    alt="Account profile"
+                    class="account-avatar"
+                    id="header-profile-image"
+                />
+                <span class="account-button-copy">
+                    <span class="account-button-label">Account</span>
+                    <span class="account-button-status" id="header-account-status">Create or sign in</span>
+                </span>
+            </a>
         </header>
 
-        <section class="panel">
-            <h2>Menu</h2>
-            <button id="refresh-menu">Refresh Menu</button>
-            <ul id="menu-list"></ul>
-        </section>
-
-        <section class="panel">
-            <h2>Create Customer</h2>
-            <form id="customer-form">
-                <input name="name" placeholder="Name" required />
-                <input name="email" placeholder="Email" />
-                <input name="phone" placeholder="Phone" />
-                <button type="submit">Save Customer</button>
-            </form>
-            <p id="customer-result"></p>
-        </section>
-
-        <section class="panel">
-            <h2>Place Order</h2>
-            <form id="order-form">
-                <input name="customer_id" type="number" min="1" placeholder="Customer ID" required />
-                <input name="menu_item_id" type="number" min="1" placeholder="Menu Item ID" required />
-                <input name="quantity" type="number" min="1" value="1" required />
-                <input name="notes" placeholder="Notes (optional)" />
-                <button type="submit">Place Order</button>
-            </form>
-            <p id="order-result"></p>
-        </section>
-
-        <section class="panel">
-            <h2>Pay with Square Checkout</h2>
-            <form id="checkout-form" method="post">
-                <input name="menu_item_id" type="number" min="1" placeholder="Menu Item ID" required />
-                <input name="quantity" type="number" min="1" value="1" required />
-                <input name="customer_id" type="number" min="1" placeholder="Customer ID (optional)" />
-                <input name="buyer_email" type="email" placeholder="Email (optional)" />
-                <input name="notes" placeholder="Order notes" />
-                <label><input name="allow_cash_app" type="checkbox" checked /> Enable Cash App Pay</label>
-                <label><input name="allow_ach" type="checkbox" checked /> Request ACH (if supported by Square flow)</label>
-                <button type="submit">Checkout with Square</button>
-            </form>
-            <p>This submits to your backend and redirects to Square's hosted payment page.</p>
+        <section class="panel landing-hero">
+            <div class="landing-copy">
+                <p class="eyebrow">Neighborhood bagel shop</p>
+                <p class="landing-kicker">Boiled, baked, and built for slow mornings.</p>
+                <h2>Fresh bagels, whipped spreads, and coffeehouse comfort.</h2>
+                <p class="hero-copy">
+                    Step into the menu and browse the lineup like you are standing at the counter.
+                    The landing page stays simple so the food can do the talking.
+                </p>
+                <a class="menu-cta" href="menu.html">View Menu</a>
+            </div>
         </section>
     </main>
 

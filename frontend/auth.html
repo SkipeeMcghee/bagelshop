@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Everything Bagelry — Sign In</title>
+    <link rel="icon" type="image/png" href="../assets/images/BagelryLogo.png" />
+    <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+    <main class="container account-page">
+        <header class="site-header">
+            <div class="header-brand">
+                <a href="index.html" aria-label="Go to home page">
+                    <img src="../assets/images/BagelryLogo.png" alt="Everything Bagelry logo" class="site-logo" />
+                </a>
+                <div>
+                    <h1>Sign In</h1>
+                    <p>Create an account or continue with Google.</p>
+                </div>
+            </div>
+            <div class="header-actions">
+                <a class="secondary-button" href="menu.html">Back to Menu</a>
+            </div>
+        </header>
+
+        <section class="panel auth-hero">
+            <div>
+                <p class="eyebrow">Your bagel account</p>
+                <h2>Sign in to save details and revisit past orders.</h2>
+                <p class="hero-copy">
+                    Use a simple username and password, or preview the Google sign-in flow until the full integration is wired up.
+                </p>
+            </div>
+            <img src="../assets/images/profilepicblank.png" alt="Profile placeholder" class="profile-hero-image" />
+        </section>
+
+        <section class="account-grid two-up">
+            <section class="panel auth-card">
+                <p class="eyebrow">Sign in</p>
+                <h3>Existing local account</h3>
+                <form id="sign-in-form">
+                    <input name="username" placeholder="Username or email" required />
+                    <input name="password" type="password" placeholder="Password" required />
+                    <button type="submit">Sign In</button>
+                </form>
+                <div class="auth-divider"><span>or</span></div>
+                <button type="button" id="continue-with-google" class="continue-with-google-button">
+                    <span class="google-mark" aria-hidden="true">G</span>
+                    <span>Continue with Google</span>
+                </button>
+                <p class="section-subtitle">Google is still in preview mode here, so this button uses a temporary signed-in state for now.</p>
+                <p class="feedback-message" id="sign-in-message"></p>
+            </section>
+
+            <section class="panel auth-card">
+                <p class="eyebrow">Create account</p>
+                <h3>Username + password</h3>
+                <p class="section-subtitle">This local preview stores your account details in the browser for now.</p>
+                <form id="create-account-form">
+                    <input name="username" placeholder="Username" required />
+                    <input name="email" type="email" placeholder="Email address" />
+                    <input name="password" type="password" placeholder="Password" required />
+                    <input name="confirm_password" type="password" placeholder="Confirm password" required />
+                    <button type="submit">Create Account</button>
+                </form>
+                <p class="feedback-message" id="create-account-message"></p>
+            </section>
+        </section>
+    </main>
+
+    <script src="auth.js"></script>
+</body>
+</html>

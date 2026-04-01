@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Everything Bagelry — Account</title>
+    <link rel="icon" type="image/png" href="../assets/images/BagelryLogo.png" />
+    <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+    <main class="container account-page">
+        <header class="site-header">
+            <div class="header-brand">
+                <a href="index.html" aria-label="Go to home page">
+                    <img src="../assets/images/BagelryLogo.png" alt="Everything Bagelry logo" class="site-logo" />
+                </a>
+                <div>
+                    <h1>Account</h1>
+                    <p>Manage your profile, password, and order history.</p>
+                </div>
+            </div>
+            <div class="header-actions">
+                <a class="secondary-button" href="menu.html">Back to Menu</a>
+            </div>
+        </header>
+
+        <section class="panel account-summary">
+            <img
+                src="../assets/images/profilepicblank.png"
+                alt="Profile preview"
+                class="profile-hero-image"
+                id="account-profile-image"
+            />
+            <div>
+                <p class="eyebrow">Your account</p>
+                <h2 id="account-display-name">Guest</h2>
+                <p class="hero-copy" id="account-summary-text">
+                    Create an account or preview Google sign-in to personalize your bagel orders.
+                </p>
+            </div>
+            <button class="ghost-button" id="sign-out-button" type="button">Sign Out</button>
+        </section>
+
+        <section class="account-grid two-up">
+            <section class="panel">
+                <p class="eyebrow">Modify account details</p>
+                <h3>Profile details</h3>
+                <form id="account-details-form">
+                    <input name="display_name" placeholder="Display name" />
+                    <input name="username" placeholder="Username" />
+                    <input name="email" type="email" placeholder="Email address" />
+                    <input name="phone" placeholder="Phone number" />
+                    <input name="profile_image_url" placeholder="Profile image URL" />
+                    <input name="linked_customer_id" type="number" min="1" placeholder="Existing customer ID (optional)" />
+                    <button type="submit">Save Changes</button>
+                </form>
+                <p class="feedback-message" id="account-details-message"></p>
+            </section>
+
+            <section class="panel">
+                <p class="eyebrow">Reset password</p>
+                <h3>Update your local password</h3>
+                <form id="password-reset-form">
+                    <input name="current_password" type="password" placeholder="Current password" />
+                    <input name="new_password" type="password" placeholder="New password" required />
+                    <input name="confirm_new_password" type="password" placeholder="Confirm new password" required />
+                    <button type="submit">Reset Password</button>
+                </form>
+                <p class="feedback-message" id="password-reset-message"></p>
+            </section>
+        </section>
+
+        <section class="panel">
+            <div class="section-heading">
+                <div>
+                    <p class="eyebrow">Past orders</p>
+                    <h3>Your recent order history</h3>
+                </div>
+                <button id="refresh-orders" type="button" class="secondary-button">Refresh Orders</button>
+            </div>
+            <p class="section-subtitle" id="orders-status">
+                Add an existing customer ID above to pull matching orders from the current backend.
+            </p>
+            <div id="orders-list" class="orders-list"></div>
+        </section>
+    </main>
+
+    <script src="account.js"></script>
+</body>
+</html>
