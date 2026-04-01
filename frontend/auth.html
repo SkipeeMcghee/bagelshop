@@ -29,7 +29,7 @@
                 <p class="eyebrow">Your bagel account</p>
                 <h2>Sign in to save details and revisit past orders.</h2>
                 <p class="hero-copy">
-                    Use a simple username and password, or continue with Google to create a session tied to your profile.
+                    Use your email and password, or continue with Google to create a session tied to your profile.
                 </p>
             </div>
             <img src="../assets/images/profilepicblank.png" alt="Profile placeholder" class="profile-hero-image" />
@@ -40,7 +40,7 @@
                 <p class="eyebrow">Sign in</p>
                 <h3>Existing local account</h3>
                 <form id="sign-in-form">
-                    <input name="username" placeholder="Username or email" required />
+                    <input name="email" type="email" placeholder="Email address" required />
                     <input name="password" type="password" placeholder="Password" required />
                     <button type="submit">Sign In</button>
                 </form>
@@ -55,11 +55,11 @@
 
             <section class="panel auth-card">
                 <p class="eyebrow">Create account</p>
-                <h3>Username + password</h3>
+                <h3>Email + password</h3>
                 <p class="section-subtitle">Create a local account if you do not want to sign in with Google.</p>
                 <form id="create-account-form">
-                    <input name="username" placeholder="Username" required />
-                    <input name="email" type="email" placeholder="Email address" />
+                    <input name="name" placeholder="Name" required />
+                    <input name="email" type="email" placeholder="Email address" required />
                     <input name="password" type="password" placeholder="Password" required />
                     <input name="confirm_password" type="password" placeholder="Confirm password" required />
                     <button type="submit">Create Account</button>

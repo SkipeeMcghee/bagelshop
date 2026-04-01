@@ -46,18 +46,15 @@
                 <p class="eyebrow">Modify account details</p>
                 <h3>Profile details</h3>
                 <form id="account-details-form">
-                    <input name="display_name" placeholder="Display name" />
-                    <input name="username" placeholder="Username" />
+                    <input name="name" placeholder="Name" />
                     <input name="email" type="email" placeholder="Email address" />
                     <input name="phone" placeholder="Phone number" />
-                    <input name="profile_image_url" placeholder="Profile image URL" />
-                    <input name="linked_customer_id" type="number" min="1" placeholder="Existing customer ID (optional)" />
                     <button type="submit">Save Changes</button>
                 </form>
                 <p class="feedback-message" id="account-details-message"></p>
             </section>
 
-            <section class="panel">
+            <section class="panel" id="password-panel">
                 <p class="eyebrow">Reset password</p>
                 <h3>Update your local password</h3>
                 <form id="password-reset-form">
@@ -71,6 +68,46 @@
         </section>
 
         <section class="panel">
+            <p class="eyebrow">Delivery details</p>
+            <h3>Shipping and billing addresses</h3>
+            <form id="delivery-address-form">
+                <div class="address-sections">
+                    <section class="address-section">
+                        <h4>Billing address</h4>
+                        <div class="address-grid">
+                            <input name="billing_address_line1" placeholder="Address line 1" />
+                            <input name="billing_address_line2" placeholder="Address line 2" />
+                            <input name="billing_city" placeholder="City" />
+                            <input name="billing_state" placeholder="State or province" />
+                            <input name="billing_postal_code" placeholder="Postal code" />
+                            <input name="billing_country" placeholder="Country" />
+                        </div>
+                    </section>
+
+                    <section class="address-section">
+                        <div class="address-section-header">
+                            <h4>Shipping address</h4>
+                            <label class="checkbox-row" for="same-as-billing-checkbox">
+                                <input id="same-as-billing-checkbox" name="same_as_billing" type="checkbox" />
+                                <span>Same as billing</span>
+                            </label>
+                        </div>
+                        <div class="address-grid">
+                            <input name="shipping_address_line1" placeholder="Address line 1" />
+                            <input name="shipping_address_line2" placeholder="Address line 2" />
+                            <input name="shipping_city" placeholder="City" />
+                            <input name="shipping_state" placeholder="State or province" />
+                            <input name="shipping_postal_code" placeholder="Postal code" />
+                            <input name="shipping_country" placeholder="Country" />
+                        </div>
+                    </section>
+                </div>
+                <button type="submit">Save Addresses</button>
+            </form>
+            <p class="feedback-message" id="delivery-address-message"></p>
+        </section>
+
+        <section class="panel">
             <div class="section-heading">
                 <div>
                     <p class="eyebrow">Past orders</p>
@@ -79,7 +116,7 @@
                 <button id="refresh-orders" type="button" class="secondary-button">Refresh Orders</button>
             </div>
             <p class="section-subtitle" id="orders-status">
-                Add an existing customer ID above to pull matching orders from the current backend.
+                Your saved account is linked directly to your order history.
             </p>
             <div id="orders-list" class="orders-list"></div>
         </section>

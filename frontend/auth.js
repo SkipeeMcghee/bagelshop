@@ -83,7 +83,7 @@ signInForm.addEventListener("submit", async (event) => {
         await apiRequest("/auth/login", {
             method: "POST",
             body: JSON.stringify({
-                username: String(formData.get("username") || "").trim(),
+                email: String(formData.get("email") || "").trim(),
                 password: String(formData.get("password") || ""),
             }),
         });
@@ -110,7 +110,7 @@ createAccountForm.addEventListener("submit", async (event) => {
         await apiRequest("/auth/register", {
             method: "POST",
             body: JSON.stringify({
-                username: String(formData.get("username") || "").trim(),
+                name: String(formData.get("name") || "").trim(),
                 email: String(formData.get("email") || "").trim(),
                 password,
             }),

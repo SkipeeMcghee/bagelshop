@@ -31,7 +31,7 @@ async function getSessionUser() {
 
 function updateHeaderAccountState(account) {
     const profileImageUrl = account?.profile_image_url || DEFAULT_PROFILE_IMAGE;
-    const label = account?.display_name || account?.username || "Create or sign in";
+    const label = account?.name || account?.email || "Create or sign in";
     const destination = account ? "account.html" : "auth.html";
 
     for (const link of accountLinks) {

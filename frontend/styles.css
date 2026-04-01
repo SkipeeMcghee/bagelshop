@@ -289,6 +289,54 @@ body {
     gap: 18px;
 }
 
+.address-sections {
+    display: grid;
+    gap: 18px;
+}
+
+.address-section {
+    padding: 16px;
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    background: rgba(255, 255, 255, 0.62);
+}
+
+.address-section h4 {
+    margin: 0 0 12px;
+}
+
+.address-section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.address-section-header h4 {
+    margin: 0;
+}
+
+.checkbox-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--muted);
+    font-size: 0.95rem;
+}
+
+.checkbox-row input {
+    width: 16px;
+    height: 16px;
+    padding: 0;
+}
+
+.address-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 10px;
+}
+
 .menu-grid {
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
     margin-top: 18px;

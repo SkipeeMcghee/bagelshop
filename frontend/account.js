@@ -6,12 +6,24 @@ const accountProfileImage = document.getElementById("account-profile-image");
 const accountDisplayName = document.getElementById("account-display-name");
 const accountSummaryText = document.getElementById("account-summary-text");
 const accountDetailsForm = document.getElementById("account-details-form");
+const deliveryAddressForm = document.getElementById("delivery-address-form");
 const passwordResetForm = document.getElementById("password-reset-form");
+const passwordPanel = document.getElementById("password-panel");
+const sameAsBillingCheckbox = document.getElementById("same-as-billing-checkbox");
 const signOutButton = document.getElementById("sign-out-button");
 const refreshOrdersButton = document.getElementById("refresh-orders");
 const ordersStatus = document.getElementById("orders-status");
 const ordersList = document.getElementById("orders-list");
 let currentUser = null;
+
+const BILLING_TO_SHIPPING_FIELDS = [
+    ["billing_address_line1", "shipping_address_line1"],
+    ["billing_address_line2", "shipping_address_line2"],
+    ["billing_city", "shipping_city"],
+    ["billing_state", "shipping_state"],
+    ["billing_postal_code", "shipping_postal_code"],
+    ["billing_country", "shipping_country"],
+];
 
 async function apiRequest(path, options = {}) {
     const response = await fetch(`${API_BASE}${path}`, {
@@ -56,21 +68,69 @@ function getAccountSummary(account) {
         };
     }
 
-    const authLabel = account.auth_provider === "google" ? "Signed in with Google" : "Signed in with a local account";
+    const authLabel = account.is_google_account ? "Signed in with Google" : "Signed in with a local account";
     return {
-        title: account.display_name || account.username || "Account",
+        title: account.name || account.email || "Account",
         text: `${authLabel}. Update your profile details, reset your password, and review your past orders here.`,
         image: account.profile_image_url || DEFAULT_PROFILE_IMAGE,
     };
 }
 
+function getInputValue(name) {
+    return String(deliveryAddressForm.elements[name]?.value || "").trim();
+}
+
+function isSameAsBillingAddress(account) {
+    if (!account) {
+        return false;
+    }
+
+    return BILLING_TO_SHIPPING_FIELDS.every(([billingName, shippingName]) => {
+        const billingKey = billingName.replace("billing_", "").replace("address_", "");
+        const shippingKey = shippingName.replace("shipping_", "").replace("address_", "");
+        const billingAddress = account.billing_address || {};
+        const shippingAddress = account.shipping_address || {};
+        return String(billingAddress[billingKey] || "") === String(shippingAddress[shippingKey] || "");
+    });
+}
+
+function syncShippingFromBilling() {
+    for (const [billingName, shippingName] of BILLING_TO_SHIPPING_FIELDS) {
+        deliveryAddressForm.elements[shippingName].value = deliveryAddressForm.elements[billingName].value;
+    }
+}
+
+function updateShippingFieldState() {
+    const disableShipping = Boolean(sameAsBillingCheckbox?.checked);
+    if (disableShipping) {
+        syncShippingFromBilling();
+    }
+
+    for (const [, shippingName] of BILLING_TO_SHIPPING_FIELDS) {
+        deliveryAddressForm.elements[shippingName].disabled = disableShipping;
+    }
+}
+
 function populateForms(account) {
-    accountDetailsForm.elements.display_name.value = account?.display_name || "";
-    accountDetailsForm.elements.username.value = account?.username || "";
+    accountDetailsForm.elements.name.value = account?.name || "";
     accountDetailsForm.elements.email.value = account?.email || "";
     accountDetailsForm.elements.phone.value = account?.phone || "";
-    accountDetailsForm.elements.profile_image_url.value = account?.profile_image_url || "";
-    accountDetailsForm.elements.linked_customer_id.value = account?.customer_id || "";
+
+    deliveryAddressForm.elements.shipping_address_line1.value = account?.shipping_address?.line1 || "";
+    deliveryAddressForm.elements.shipping_address_line2.value = account?.shipping_address?.line2 || "";
+    deliveryAddressForm.elements.shipping_city.value = account?.shipping_address?.city || "";
+    deliveryAddressForm.elements.shipping_state.value = account?.shipping_address?.state || "";
+    deliveryAddressForm.elements.shipping_postal_code.value = account?.shipping_address?.postal_code || "";
+    deliveryAddressForm.elements.shipping_country.value = account?.shipping_address?.country || "";
+    deliveryAddressForm.elements.billing_address_line1.value = account?.billing_address?.line1 || "";
+    deliveryAddressForm.elements.billing_address_line2.value = account?.billing_address?.line2 || "";
+    deliveryAddressForm.elements.billing_city.value = account?.billing_address?.city || "";
+    deliveryAddressForm.elements.billing_state.value = account?.billing_address?.state || "";
+    deliveryAddressForm.elements.billing_postal_code.value = account?.billing_address?.postal_code || "";
+    deliveryAddressForm.elements.billing_country.value = account?.billing_address?.country || "";
+
+    sameAsBillingCheckbox.checked = isSameAsBillingAddress(account);
+    updateShippingFieldState();
 }
 
 function renderSummary(account) {
@@ -79,6 +139,7 @@ function renderSummary(account) {
     accountDisplayName.textContent = summary.title;
     accountSummaryText.textContent = summary.text;
     accountProfileImage.src = summary.image;
+    passwordPanel.hidden = Boolean(account?.is_google_account);
     populateForms(account);
 }
 
@@ -164,12 +225,9 @@ accountDetailsForm.addEventListener("submit", async (event) => {
         const data = await apiRequest("/me", {
             method: "POST",
             body: JSON.stringify({
-                display_name: String(formData.get("display_name") || "").trim(),
-                username: String(formData.get("username") || "").trim(),
+                name: String(formData.get("name") || "").trim(),
                 email: String(formData.get("email") || "").trim(),
                 phone: String(formData.get("phone") || "").trim(),
-                profile_image_url:
-                    String(formData.get("profile_image_url") || "").trim() || DEFAULT_PROFILE_IMAGE,
             }),
         });
         currentUser = data.user;
@@ -180,6 +238,53 @@ accountDetailsForm.addEventListener("submit", async (event) => {
     }
 });
 
+deliveryAddressForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    clearFeedback();
+
+    if (sameAsBillingCheckbox.checked) {
+        syncShippingFromBilling();
+    }
+
+    const formData = new FormData(deliveryAddressForm);
+    try {
+        const data = await apiRequest("/me", {
+            method: "POST",
+            body: JSON.stringify({
+                shipping_address_line1: String(formData.get("shipping_address_line1") || "").trim(),
+                shipping_address_line2: String(formData.get("shipping_address_line2") || "").trim(),
+                shipping_city: String(formData.get("shipping_city") || "").trim(),
+                shipping_state: String(formData.get("shipping_state") || "").trim(),
+                shipping_postal_code: String(formData.get("shipping_postal_code") || "").trim(),
+                shipping_country: String(formData.get("shipping_country") || "").trim(),
+                billing_address_line1: String(formData.get("billing_address_line1") || "").trim(),
+                billing_address_line2: String(formData.get("billing_address_line2") || "").trim(),
+                billing_city: String(formData.get("billing_city") || "").trim(),
+                billing_state: String(formData.get("billing_state") || "").trim(),
+                billing_postal_code: String(formData.get("billing_postal_code") || "").trim(),
+                billing_country: String(formData.get("billing_country") || "").trim(),
+            }),
+        });
+        currentUser = data.user;
+        renderSummary(currentUser);
+        setFeedback("delivery-address-message", "Delivery addresses updated.");
+    } catch (error) {
+        setFeedback("delivery-address-message", String(error.message || error), "error");
+    }
+});
+
+sameAsBillingCheckbox.addEventListener("change", () => {
+    updateShippingFieldState();
+});
+
+for (const [billingName] of BILLING_TO_SHIPPING_FIELDS) {
+    deliveryAddressForm.elements[billingName].addEventListener("input", () => {
+        if (sameAsBillingCheckbox.checked) {
+            syncShippingFromBilling();
+        }
+    });
+}
+
 passwordResetForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     clearFeedback();
@@ -189,7 +294,7 @@ passwordResetForm.addEventListener("submit", async (event) => {
         return;
     }
 
-    if (currentUser.auth_provider === "google") {
+    if (currentUser.is_google_account) {
         setFeedback("password-reset-message", "Google sign-in uses Google credentials, so there is no local password to reset here.", "error");
         return;
     }
