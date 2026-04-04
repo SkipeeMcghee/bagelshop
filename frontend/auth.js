@@ -34,6 +34,12 @@ function setFeedback(id, message, type = "success") {
 }
 
 function redirectToAccount() {
+    const params = new URLSearchParams(window.location.search);
+    const next = String(params.get("next") || "").trim().toLowerCase();
+    if (next === "contact") {
+        window.location.href = "contact.html";
+        return;
+    }
     window.location.href = "account.html";
 }
 

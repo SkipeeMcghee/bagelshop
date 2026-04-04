@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Everything Bagelry — Events</title>
-    <link rel="icon" type="image/png" href="../assets/images/BagelryLogo.png" />
+    <link rel="icon" type="image/png" href="../assets/images/BagelryLogo.png?v=20260404b" />
     <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -12,7 +12,7 @@
         <header class="site-header">
             <div class="header-brand">
                 <a href="index.html" aria-label="Go to home page">
-                    <img src="../assets/images/BagelryLogo.png" alt="Everything Bagelry logo" class="site-logo" />
+                    <img src="../assets/images/BagelryLogo.png?v=20260404b" alt="Everything Bagelry logo" class="site-logo" />
                 </a>
                 <div>
                     <h1>Events Calendar</h1>
@@ -74,6 +74,17 @@
             </div>
             <div class="calendar-grid" id="calendar-grid" aria-live="polite"></div>
         </section>
+
+        <div class="calendar-detail-overlay" id="calendar-detail-overlay" hidden>
+            <div class="calendar-detail-backdrop" id="calendar-detail-backdrop"></div>
+            <section class="calendar-detail-card" role="dialog" aria-modal="true" aria-labelledby="calendar-detail-title">
+                <button type="button" class="calendar-detail-close" id="calendar-detail-close" aria-label="Close event details">×</button>
+                <p class="eyebrow">Selected day</p>
+                <h3 id="calendar-detail-title">Event details</h3>
+                <p class="section-subtitle" id="calendar-detail-subtitle"></p>
+                <div class="calendar-detail-list" id="calendar-detail-list"></div>
+            </section>
+        </div>
     </main>
 
     <script src="app.js"></script>

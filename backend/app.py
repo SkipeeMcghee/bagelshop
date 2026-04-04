@@ -513,6 +513,8 @@ def ensure_orders_schema_columns(conn: sqlite3.Connection) -> None:
         )
     if "square_payment_id" not in order_columns:
         conn.execute("ALTER TABLE orders ADD COLUMN square_payment_id TEXT")
+    if "paid_at" not in order_columns:
+        conn.execute("ALTER TABLE orders ADD COLUMN paid_at TEXT")
 
     menu_columns = {
         row["name"] for row in conn.execute("PRAGMA table_info(menu_items)").fetchall()
@@ -767,11 +769,11 @@ def ensure_events_schema(conn: sqlite3.Connection) -> None:
         """
         CREATE TABLE IF NOT EXISTS events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL DEFAULT '',
             event_date TEXT NOT NULL,
             location TEXT NOT NULL DEFAULT '',
             start_time TEXT NOT NULL DEFAULT '',
-            end_time TEXT NOT NULL DEFAULT '',
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            end_time TEXT NOT NULL DEFAULT ''
         )
         """
     )
@@ -779,12 +781,40 @@ def ensure_events_schema(conn: sqlite3.Connection) -> None:
     event_columns = {
         row["name"] for row in conn.execute("PRAGMA table_info(events)").fetchall()
     }
+
+    if "created_at" in event_columns:
+        conn.execute("DROP TABLE IF EXISTS events__new")
+        conn.execute(
+            """
+            CREATE TABLE events__new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL DEFAULT '',
+                event_date TEXT NOT NULL,
+                location TEXT NOT NULL DEFAULT '',
+                start_time TEXT NOT NULL DEFAULT '',
+                end_time TEXT NOT NULL DEFAULT ''
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO events__new (id, name, event_date, location, start_time, end_time)
+            SELECT id, '', event_date, location, start_time, end_time
+            FROM events
+            """
+        )
+        conn.execute("DROP TABLE events")
+        conn.execute("ALTER TABLE events__new RENAME TO events")
+        event_columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(events)").fetchall()
+        }
+
     for column_name, definition in (
+        ("name", "TEXT NOT NULL DEFAULT ''"),
         ("event_date", "TEXT NOT NULL DEFAULT ''"),
         ("location", "TEXT NOT NULL DEFAULT ''"),
         ("start_time", "TEXT NOT NULL DEFAULT ''"),
         ("end_time", "TEXT NOT NULL DEFAULT ''"),
-        ("created_at", "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP"),
     ):
         if column_name not in event_columns:
             conn.execute(f"ALTER TABLE events ADD COLUMN {column_name} {definition}")
@@ -1139,7 +1169,28 @@ def sanitize_row_payload(conn: sqlite3.Connection, table_name: str, payload: dic
 
 def get_allowed_origin() -> str | None:
     request_origin = request.headers.get("Origin", "").strip()
-    if request_origin and request_origin == FRONTEND_ORIGIN:
+    if not request_origin:
+        return None
+
+    allowed_origins = {FRONTEND_ORIGIN}
+
+    frontend_parts = urlsplit(FRONTEND_BASE_URL)
+    frontend_host = frontend_parts.hostname or ""
+    frontend_port = frontend_parts.port
+    frontend_scheme = frontend_parts.scheme or "http"
+
+    if frontend_host == "127.0.0.1":
+        alt_host = "localhost"
+    elif frontend_host == "localhost":
+        alt_host = "127.0.0.1"
+    else:
+        alt_host = ""
+
+    if alt_host:
+        alt_netloc = alt_host if frontend_port is None else f"{alt_host}:{frontend_port}"
+        allowed_origins.add(f"{frontend_scheme}://{alt_netloc}")
+
+    if request_origin in allowed_origins:
         return request_origin
     return None
 
@@ -1152,7 +1203,7 @@ def add_cors_headers(response):
         response.headers["Access-Control-Allow-Credentials"] = "true"
         response.headers["Vary"] = "Origin"
     response.headers["Access-Control-Allow-Headers"] = "Content-Type"
-    response.headers["Access-Control-Allow-Methods"] = "GET,POST,OPTIONS"
+    response.headers["Access-Control-Allow-Methods"] = "GET,POST,PATCH,DELETE,OPTIONS"
     return response
 
 
@@ -1219,7 +1270,7 @@ def get_events():
         if start_date and end_date:
             rows = conn.execute(
                 """
-                SELECT id, event_date, location, start_time, end_time, created_at
+                SELECT id, name, event_date, location, start_time, end_time
                 FROM events
                 WHERE event_date >= ? AND event_date < ?
                 ORDER BY event_date ASC, start_time ASC, end_time ASC, id ASC
@@ -1229,7 +1280,7 @@ def get_events():
         else:
             rows = conn.execute(
                 """
-                SELECT id, event_date, location, start_time, end_time, created_at
+                SELECT id, name, event_date, location, start_time, end_time
                 FROM events
                 ORDER BY event_date ASC, start_time ASC, end_time ASC, id ASC
                 """
@@ -1423,6 +1474,139 @@ def admin_delete_row(table_name: str, row_id: str):
         conn.close()
 
     return jsonify({"message": "Row deleted"}), 200
+
+
+@app.post("/api/admin/events/<int:event_id>/duplicate-week")
+@admin_required
+def admin_duplicate_event_week(event_id: int):
+    conn = get_db()
+    try:
+        event = conn.execute(
+            """
+            SELECT id, name, event_date, location, start_time, end_time
+            FROM events
+            WHERE id = ?
+            LIMIT 1
+            """,
+            (event_id,),
+        ).fetchone()
+        if event is None:
+            return jsonify({"error": "Event not found"}), 404
+
+        try:
+            next_date = datetime.fromisoformat(str(event["event_date"])).date()
+        except ValueError:
+            return jsonify({"error": "Event date is invalid"}), 400
+
+        duplicated_date = next_date.fromordinal(next_date.toordinal() + 7).isoformat()
+        cursor = conn.execute(
+            """
+            INSERT INTO events (name, event_date, location, start_time, end_time)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                str(event["name"] or "").strip(),
+                duplicated_date,
+                str(event["location"] or "").strip(),
+                str(event["start_time"] or "").strip(),
+                str(event["end_time"] or "").strip(),
+            ),
+        )
+        new_id = int(cursor.lastrowid)
+        conn.commit()
+
+        duplicated = conn.execute(
+            """
+            SELECT id, name, event_date, location, start_time, end_time
+            FROM events
+            WHERE id = ?
+            LIMIT 1
+            """,
+            (new_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    return jsonify({"message": "Event duplicated", "row": dict(duplicated)}), 201
+
+
+@app.get("/api/admin/orders/details")
+@admin_required
+def admin_get_order_details():
+    conn = get_db()
+    try:
+        order_rows = conn.execute(
+            """
+            SELECT o.id, o.customer_id, o.status, o.total_cents, o.notes,
+                   o.payment_status, o.square_payment_id, o.paid_at, o.created_at,
+                   c.name AS customer_name, c.email AS customer_email
+            FROM orders o
+            LEFT JOIN customers c ON c.id = o.customer_id
+            ORDER BY o.id DESC
+            """
+        ).fetchall()
+
+        orders: list[dict[str, Any]] = []
+        for order in order_rows:
+            item_rows = conn.execute(
+                """
+                SELECT oi.id, oi.order_id, oi.menu_item_id, oi.quantity,
+                       oi.unit_price_cents, oi.line_total_cents,
+                       mi.name AS menu_item_name
+                FROM order_items oi
+                LEFT JOIN menu_items mi ON mi.id = oi.menu_item_id
+                WHERE oi.order_id = ?
+                ORDER BY oi.id ASC
+                """,
+                (order["id"],),
+            ).fetchall()
+
+            items: list[dict[str, Any]] = []
+            subtotal_cents = 0
+            for item in item_rows:
+                item_dict = dict(item)
+                item_dict["menu_item_name"] = str(item_dict.get("menu_item_name") or "Menu item")
+                item_dict["quantity"] = int(item_dict.get("quantity") or 0)
+                item_dict["unit_price_cents"] = int(item_dict.get("unit_price_cents") or 0)
+                item_dict["line_total_cents"] = int(item_dict.get("line_total_cents") or 0)
+                subtotal_cents += item_dict["line_total_cents"]
+                items.append(item_dict)
+
+            total_cents = int(order["total_cents"] or 0)
+            fee_total_cents = max(0, total_cents - subtotal_cents)
+            fees: list[dict[str, Any]] = []
+            if fee_total_cents > 0:
+                fees.append({"label": "Additional fees", "amount_cents": fee_total_cents})
+
+            buyer_name = str(order["customer_name"] or "").strip() or "Guest customer"
+            buyer_email = str(order["customer_email"] or "").strip()
+            paid_at = str(order["paid_at"] or "").strip()
+            if not paid_at and str(order["payment_status"] or "").strip().lower() == "paid":
+                paid_at = str(order["created_at"] or "").strip()
+
+            orders.append(
+                {
+                    "id": int(order["id"]),
+                    "customer_id": order["customer_id"],
+                    "buyer_name": buyer_name,
+                    "buyer_email": buyer_email,
+                    "status": order["status"],
+                    "payment_status": order["payment_status"],
+                    "square_payment_id": order["square_payment_id"],
+                    "paid_at": paid_at,
+                    "created_at": order["created_at"],
+                    "notes": order["notes"],
+                    "items": items,
+                    "subtotal_cents": subtotal_cents,
+                    "fees": fees,
+                    "fee_total_cents": fee_total_cents,
+                    "total_cents": total_cents,
+                }
+            )
+    finally:
+        conn.close()
+
+    return jsonify(orders), 200
 
 
 @app.post("/api/admin/db/query")
@@ -2284,8 +2468,8 @@ def get_my_orders():
 
         order_rows = conn.execute(
             """
-            SELECT id, customer_id, status, total_cents, notes, payment_status,
-                   square_payment_id, created_at
+                 SELECT id, customer_id, status, total_cents, notes, payment_status,
+                     square_payment_id, paid_at, created_at
             FROM orders
             WHERE customer_id = ?
             ORDER BY id DESC
@@ -2321,8 +2505,8 @@ def get_orders():
     try:
         order_rows = conn.execute(
             """
-            SELECT id, customer_id, status, total_cents, notes, payment_status,
-                   square_payment_id, created_at
+                 SELECT id, customer_id, status, total_cents, notes, payment_status,
+                     square_payment_id, paid_at, created_at
             FROM orders
             ORDER BY id DESC
             """
@@ -2348,6 +2532,56 @@ def get_orders():
         conn.close()
 
     return jsonify(orders)
+
+
+@app.post("/api/contact")
+@login_required
+def submit_contact_form():
+    data = request.get_json(silent=True) or {}
+    subject = str(data.get("subject", "") or "").strip()
+    message = str(data.get("message", "") or "").strip()
+
+    if not subject:
+        return jsonify({"error": "Subject is required."}), 400
+    if not message:
+        return jsonify({"error": "Message is required."}), 400
+
+    conn = get_db()
+    try:
+        user = get_current_user(conn)
+        if user is None:
+            clear_logged_in_user()
+            return jsonify({"error": "Authentication required"}), 401
+
+        if not bool(user["is_google_account"]) and not bool(user["email_verified"]):
+            return jsonify(
+                {
+                    "error": "Verify your email before using the contact form.",
+                    "verification_required": True,
+                    "email": str(user["email"] or ""),
+                }
+            ), 403
+
+        sender_name = str(data.get("name", "") or user["name"] or user["email"] or "Account holder").strip()
+        sender_email = str(user["email"] or data.get("email", "") or "").strip()
+
+        print(
+            "[contact form] "
+            f"From: {sender_name} <{sender_email}>\n"
+            f"Subject: {subject}\n\n"
+            f"{message}",
+            flush=True,
+        )
+    finally:
+        conn.close()
+
+    return jsonify(
+        {
+            "message": "Thanks for reaching out. Your message was accepted and logged for now.",
+            "sender_name": sender_name,
+            "sender_email": sender_email,
+        }
+    ), 200
 
 
 @app.post("/api/orders")
@@ -2392,8 +2626,8 @@ def create_order():
 
         order = conn.execute(
             """
-            SELECT id, customer_id, status, total_cents, notes, payment_status,
-                   square_payment_id, created_at
+                 SELECT id, customer_id, status, total_cents, notes, payment_status,
+                     square_payment_id, paid_at, created_at
             FROM orders
             WHERE id = ?
             """,
@@ -2580,10 +2814,18 @@ def square_webhook():
                     conn.execute(
                         """
                         UPDATE orders
-                        SET payment_status = 'paid', square_payment_id = ?
+                        SET payment_status = 'paid', square_payment_id = ?, paid_at = COALESCE(paid_at, ?)
                         WHERE id = ?
                         """,
-                        (payment_id, order_id),
+                        (
+                            payment_id,
+                            str(
+                                payment_data.get("updated_at")
+                                or payment_data.get("created_at")
+                                or now_iso()
+                            ),
+                            order_id,
+                        ),
                     )
                 elif payment_status in {"FAILED", "CANCELED"}:
                     conn.execute(

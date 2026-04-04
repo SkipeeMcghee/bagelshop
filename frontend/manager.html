@@ -3,8 +3,11 @@
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
     <title>Everything Bagelry — Manager Portal</title>
-    <link rel="icon" type="image/png" href="../assets/images/BagelryLogo.png" />
+    <link rel="icon" type="image/png" href="../assets/images/BagelryLogo.png?v=20260404b" />
     <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -12,7 +15,7 @@
         <header class="site-header">
             <div class="header-brand">
                 <a href="index.html" aria-label="Go to home page">
-                    <img src="../assets/images/BagelryLogo.png" alt="Everything Bagelry logo" class="site-logo" />
+                    <img src="../assets/images/BagelryLogo.png?v=20260404b" alt="Everything Bagelry logo" class="site-logo" />
                 </a>
                 <div>
                     <h1>Manager Portal</h1>
@@ -49,9 +52,9 @@
         <section class="panel manager-hero">
             <div>
                 <p class="eyebrow">Admin tools</p>
-                <h2>Browse, edit, and query the live SQLite database</h2>
+                <h2>Browse and manage the live SQLite database visually</h2>
                 <p class="hero-copy">
-                    This portal is intended for managers only. It includes direct table browsing, row editing, event management through the database, and an SQL console for advanced admin work.
+                    Select a table, choose a record, and use clickable controls to create, update, or delete values without working in raw SQL or JSON.
                 </p>
             </div>
             <div class="manager-status-card">
@@ -66,7 +69,7 @@
                 <div class="section-heading">
                     <div>
                         <p class="eyebrow">Tables</p>
-                        <h3>Database browser</h3>
+                        <h3>Database map</h3>
                     </div>
                 </div>
                 <p class="section-subtitle" id="manager-table-status">Loading tables...</p>
@@ -82,53 +85,48 @@
                         </div>
                         <div class="manager-panel-actions">
                             <button type="button" class="secondary-button" id="manager-refresh-table">Refresh</button>
-                            <button type="button" class="ghost-button" id="manager-new-row">New Row</button>
+                            <button type="button" class="ghost-button" id="manager-new-row">Create Record</button>
                         </div>
                     </div>
-                    <p class="section-subtitle" id="manager-current-table-meta">Select a table to inspect rows and edit records.</p>
+                    <p class="section-subtitle" id="manager-current-table-meta">Select a table to inspect rows and manage records.</p>
                     <div class="manager-table-wrapper" id="manager-table-wrapper"></div>
                 </section>
 
-                <section class="manager-editor-grid">
-                    <section class="panel">
-                        <div class="section-heading manager-panel-header">
-                            <div>
-                                <p class="eyebrow">Row editor</p>
-                                <h3 id="manager-editor-title">JSON row editor</h3>
-                            </div>
-                            <div class="manager-panel-actions">
-                                <button type="button" id="manager-save-row">Save Row</button>
-                                <button type="button" class="ghost-button" id="manager-delete-row">Delete Row</button>
-                            </div>
+                <section class="panel manager-record-panel">
+                    <div class="section-heading manager-panel-header">
+                        <div>
+                            <p class="eyebrow">Record details</p>
+                            <h3 id="manager-editor-title">Select a record</h3>
                         </div>
-                        <p class="form-note">Edit row values as JSON. Use the New Row button for inserts.</p>
-                        <textarea id="manager-row-editor" rows="16" spellcheck="false"></textarea>
-                        <p class="feedback-message" id="manager-row-message"></p>
-                    </section>
-
-                    <section class="panel">
-                        <div class="section-heading manager-panel-header">
-                            <div>
-                                <p class="eyebrow">SQL console</p>
-                                <h3>Direct SQLite query runner</h3>
-                            </div>
-                            <div class="manager-panel-actions">
-                                <button type="button" id="manager-run-query">Run Query</button>
-                            </div>
+                        <div class="manager-panel-actions">
+                            <button type="button" class="secondary-button" id="manager-duplicate-event" hidden>Duplicate +7 Days</button>
+                            <button type="button" class="secondary-button" id="manager-orders-detail" hidden>Detailed View</button>
+                            <button type="button" id="manager-save-row">Save Changes</button>
+                            <button type="button" class="ghost-button" id="manager-delete-row">Delete Record</button>
                         </div>
-                        <label class="manager-label" for="manager-sql-editor">SQL</label>
-                        <textarea id="manager-sql-editor" rows="10" spellcheck="false">SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name;</textarea>
-                        <label class="manager-label" for="manager-sql-params">Params (JSON array)</label>
-                        <textarea id="manager-sql-params" rows="4" spellcheck="false">[]</textarea>
-                        <p class="feedback-message" id="manager-query-message"></p>
-                        <pre class="manager-query-results" id="manager-query-results">Run a query to inspect results here.</pre>
-                    </section>
+                    </div>
+                    <p class="form-note" id="manager-record-note">Pick a row from the table above or create a new record to edit fields visually.</p>
+                    <form id="manager-record-form" class="manager-record-form">
+                        <div class="manager-record-fields" id="manager-record-fields"></div>
+                    </form>
+                    <p class="feedback-message" id="manager-row-message"></p>
                 </section>
             </section>
         </section>
+
+        <div class="orders-detail-overlay" id="orders-detail-overlay" hidden>
+            <div class="orders-detail-backdrop" id="orders-detail-backdrop"></div>
+            <section class="orders-detail-card" role="dialog" aria-modal="true" aria-labelledby="orders-detail-title">
+                <button type="button" class="orders-detail-close" id="orders-detail-close" aria-label="Close order details">×</button>
+                <p class="eyebrow">Order details</p>
+                <h3 id="orders-detail-title">All orders</h3>
+                <p class="section-subtitle" id="orders-detail-subtitle"></p>
+                <div class="orders-detail-list" id="orders-detail-list"></div>
+            </section>
+        </div>
     </main>
 
-    <script src="app.js"></script>
-    <script src="manager.js"></script>
+    <script src="app.js?v=20260404"></script>
+    <script src="manager.js?v=20260404"></script>
 </body>
 </html>

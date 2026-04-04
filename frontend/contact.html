@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Everything Bagelry — Contact Us</title>
-    <link rel="icon" type="image/png" href="../assets/images/BagelryLogo.png" />
+    <link rel="icon" type="image/png" href="../assets/images/BagelryLogo.png?v=20260404b" />
     <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -12,7 +12,7 @@
         <header class="site-header">
             <div class="header-brand">
                 <a href="index.html" aria-label="Go to home page">
-                    <img src="../assets/images/BagelryLogo.png" alt="Everything Bagelry logo" class="site-logo" />
+                    <img src="../assets/images/BagelryLogo.png?v=20260404b" alt="Everything Bagelry logo" class="site-logo" />
                 </a>
                 <div>
                     <h1>Contact Us</h1>
@@ -46,70 +46,25 @@
             </div>
         </nav>
 
-        <section class="panel fancy-hero contact-hero">
-            <div class="fancy-hero-copy">
-                <p class="eyebrow">Get in touch</p>
-                <p class="landing-kicker">Questions, event inquiries, or general hellos.</p>
-                <h2>We are ready for the page now, and real email delivery later.</h2>
-                <p class="hero-copy">
-                    The contact flow is staged for the real setup. For now, this page gives the site a polished contact
-                    experience while the actual mail server piece is still pending.
-                </p>
+        <section class="panel contact-form-panel contact-form-panel-wide">
+            <p class="eyebrow">Contact form</p>
+            <h2>Send us a message</h2>
+            <p class="form-note" id="contact-access-note">Sign in with Google or use a verified local account to send a message.</p>
+            <div class="contact-auth-actions" id="contact-auth-actions">
+                <a class="secondary-button" id="contact-sign-in-link" href="auth.html?next=contact">Sign In or Create Account</a>
             </div>
-            <aside class="hero-highlight-card">
-                <p class="hero-highlight-label">Current status</p>
-                <strong>Form UI is live</strong>
-                <p>
-                    Submissions show a placeholder confirmation today and can be wired to SMTP or an email service later.
-                </p>
-            </aside>
-        </section>
-
-        <section class="contact-grid contact-grid-fancy">
-            <section class="page-stack">
-                <div>
-                    <p class="eyebrow">Reach the shop</p>
-                    <h2>Questions, catering ideas, or event planning</h2>
-                    <p class="hero-copy">Placeholder details for now, with a more polished layout for the live site.</p>
-                </div>
-
-                <div class="contact-details">
-                    <article class="info-card contact-card">
-                        <p class="contact-detail-label">Phone</p>
-                        <p class="contact-detail-value">(555) 010-2480</p>
-                    </article>
-                    <article class="info-card contact-card">
-                        <p class="contact-detail-label">Email</p>
-                        <p class="contact-detail-value">hello@everythingbagelry.com</p>
-                    </article>
-                    <article class="info-card contact-card">
-                        <p class="contact-detail-label">Address</p>
-                        <p class="contact-detail-value">123 Bagel Avenue<br />New York, NY 10001</p>
-                    </article>
-                    <article class="info-card contact-card">
-                        <p class="contact-detail-label">Hours</p>
-                        <p class="contact-detail-value">Mon–Fri: 6:00 AM – 2:00 PM<br />Sat–Sun: 7:00 AM – 2:00 PM</p>
-                    </article>
-                </div>
-            </section>
-
-            <section class="panel contact-form-panel">
-                <p class="eyebrow">Contact form</p>
-                <h3>Send us a message</h3>
-                <p class="form-note">This form is currently a placeholder until email delivery is connected.</p>
-                <form id="contact-form">
-                    <input name="name" placeholder="Your name" required />
-                    <input name="email" type="email" placeholder="Your email" required />
-                    <input name="subject" placeholder="Subject" required />
-                    <textarea name="message" rows="6" placeholder="Tell us how we can help" required></textarea>
-                    <button type="submit">Send Message</button>
-                </form>
-                <p class="feedback-message" id="contact-form-message"></p>
-            </section>
+            <form id="contact-form">
+                <input name="name" placeholder="Your name" required />
+                <input name="email" type="email" placeholder="Your email" required />
+                <input name="subject" placeholder="Subject" required />
+                <textarea name="message" rows="10" placeholder="Tell us how we can help" required></textarea>
+                <button type="submit" id="contact-submit-button">Send Message</button>
+            </form>
+            <p class="feedback-message" id="contact-form-message"></p>
         </section>
     </main>
 
-    <script src="app.js"></script>
-    <script src="contact.js"></script>
+    <script src="app.js?v=20260404b"></script>
+    <script src="contact.js?v=20260404d"></script>
 </body>
 </html>

@@ -23,6 +23,10 @@ body {
     background: var(--bg-accent);
 }
 
+body.modal-open {
+    overflow: hidden;
+}
+
 .container {
     max-width: 1120px;
     margin: 0 auto;
@@ -409,6 +413,19 @@ body {
     gap: 12px;
 }
 
+.calendar-day.has-events {
+    cursor: pointer;
+    transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.calendar-day.has-events:hover,
+.calendar-day.has-events:focus-visible {
+    transform: translateY(-2px);
+    border-color: rgba(42, 100, 150, 0.26);
+    box-shadow: 0 16px 28px rgba(21, 31, 38, 0.10);
+    outline: none;
+}
+
 .calendar-day.is-outside-month {
     opacity: 0.48;
     background: rgba(255, 255, 255, 0.58);
@@ -441,21 +458,246 @@ body {
 
 .calendar-event-chip {
     display: grid;
-    gap: 4px;
+    gap: 5px;
     padding: 10px 12px;
     border-radius: 14px;
     background: rgba(46, 125, 94, 0.10);
     border: 1px solid rgba(46, 125, 94, 0.14);
+    align-content: start;
 }
 
 .calendar-event-chip strong {
-    font-size: 0.92rem;
+    display: block;
+    font-size: 0.9rem;
+    line-height: 1.25;
+    color: var(--ink);
+}
+
+.calendar-event-chip-meta {
+    display: block;
+    color: var(--muted);
+    font-size: 0.76rem;
+    line-height: 1.35;
 }
 
 .calendar-event-chip span,
 .calendar-empty-note {
     color: var(--muted);
     font-size: 0.88rem;
+}
+
+.calendar-detail-overlay {
+    position: fixed;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    z-index: 40;
+    padding: 24px;
+}
+
+.calendar-detail-overlay[hidden] {
+    display: none !important;
+}
+
+.calendar-detail-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(20, 27, 32, 0.45);
+    backdrop-filter: blur(6px);
+}
+
+.calendar-detail-card {
+    position: relative;
+    z-index: 1;
+    width: min(720px, 100%);
+    max-height: min(80vh, 760px);
+    overflow: auto;
+    padding: 26px;
+    border-radius: 24px;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(246, 243, 238, 0.96));
+    box-shadow: 0 24px 60px rgba(18, 27, 33, 0.22);
+}
+
+.calendar-detail-close {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    width: 42px;
+    height: 42px;
+    padding: 0;
+    border-radius: 50%;
+    background: rgba(42, 100, 150, 0.12);
+    color: var(--accent-secondary);
+    font-size: 1.35rem;
+    line-height: 1;
+}
+
+.calendar-detail-list {
+    display: grid;
+    gap: 14px;
+    margin-top: 18px;
+}
+
+.calendar-detail-item {
+    padding: 18px;
+    border-radius: 18px;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.82);
+}
+
+.calendar-detail-item h4 {
+    margin: 0 0 8px;
+    font-size: 1.1rem;
+}
+
+.calendar-detail-item-meta,
+.calendar-detail-item-address {
+    margin: 0;
+    color: var(--muted);
+    line-height: 1.6;
+}
+
+.calendar-detail-item-address {
+    margin-top: 8px;
+    font-size: 0.95rem;
+}
+
+.orders-detail-overlay {
+    position: fixed;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    z-index: 45;
+    padding: 24px;
+}
+
+.orders-detail-overlay[hidden] {
+    display: none !important;
+}
+
+.orders-detail-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(20, 27, 32, 0.55);
+    backdrop-filter: blur(8px);
+}
+
+.orders-detail-card {
+    position: relative;
+    z-index: 1;
+    width: min(1080px, 100%);
+    max-height: min(86vh, 920px);
+    overflow: auto;
+    padding: 28px;
+    border-radius: 28px;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(246, 243, 238, 0.96));
+    box-shadow: 0 28px 70px rgba(18, 27, 33, 0.24);
+}
+
+.orders-detail-close {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    width: 42px;
+    height: 42px;
+    padding: 0;
+    border-radius: 50%;
+    background: rgba(42, 100, 150, 0.12);
+    color: var(--accent-secondary);
+    font-size: 1.35rem;
+    line-height: 1;
+}
+
+.orders-detail-list {
+    display: grid;
+    gap: 18px;
+    margin-top: 18px;
+}
+
+.orders-detail-item {
+    display: grid;
+    gap: 18px;
+    padding: 22px;
+    border-radius: 22px;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.86);
+}
+
+.orders-detail-item-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+}
+
+.orders-detail-item h4 {
+    margin: 0 0 8px;
+    font-size: 1.18rem;
+}
+
+.orders-detail-buyer,
+.orders-detail-meta,
+.orders-detail-notes,
+.orders-detail-empty {
+    margin: 0;
+    color: var(--muted);
+    line-height: 1.65;
+}
+
+.orders-detail-total {
+    font-size: 1.24rem;
+    color: var(--accent);
+    white-space: nowrap;
+}
+
+.orders-detail-section {
+    display: grid;
+    gap: 10px;
+}
+
+.orders-detail-section-title {
+    margin: 0;
+    font-size: 0.82rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent-secondary);
+}
+
+.orders-detail-lines,
+.orders-detail-summary {
+    display: grid;
+    gap: 8px;
+}
+
+.orders-detail-summary {
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+}
+
+.orders-detail-line {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+}
+
+.orders-detail-line span:last-child {
+    white-space: nowrap;
+    font-weight: 700;
+}
+
+.orders-detail-line.muted span {
+    color: var(--muted);
+    font-weight: 500;
+}
+
+.orders-detail-line.total {
+    margin-top: 4px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(215, 223, 216, 0.8);
+    font-size: 1.02rem;
+    font-weight: 800;
 }
 
 .manager-hero {
@@ -493,9 +735,14 @@ body {
     align-items: start;
 }
 
+.manager-layout > * {
+    min-width: 0;
+}
+
 .manager-main-stack {
     display: grid;
     gap: 22px;
+    min-width: 0;
 }
 
 .manager-sidebar {
@@ -510,8 +757,8 @@ body {
 
 .manager-table-button {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
+    align-items: stretch;
+    justify-content: flex-start;
     width: 100%;
     padding: 14px 16px;
     border-radius: 16px;
@@ -522,8 +769,42 @@ body {
     cursor: pointer;
 }
 
+.manager-table-button-copy {
+    display: grid;
+    gap: 8px;
+    width: 100%;
+    text-align: left;
+}
+
+.manager-table-button-copy > span {
+    color: var(--muted);
+    font-size: 0.92rem;
+}
+
 .manager-table-button strong {
     color: var(--accent-secondary);
+}
+
+.manager-table-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.manager-table-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 6px 10px;
+    border-radius: 999px;
+    background: rgba(42, 100, 150, 0.10);
+    color: var(--accent-secondary);
+    font-size: 0.78rem;
+    font-weight: 700;
+}
+
+.manager-table-chip.more {
+    background: rgba(46, 125, 94, 0.10);
+    color: var(--accent);
 }
 
 .manager-table-button.active,
@@ -544,7 +825,9 @@ body {
 }
 
 .manager-table-wrapper {
-    overflow: auto;
+    overflow-x: auto;
+    overflow-y: auto;
+    max-width: 100%;
     margin-top: 16px;
     border: 1px solid var(--border);
     border-radius: 16px;
@@ -552,7 +835,8 @@ body {
 }
 
 .manager-data-table {
-    width: 100%;
+    width: max-content;
+    min-width: 100%;
     border-collapse: collapse;
     min-width: 720px;
 }
@@ -563,6 +847,10 @@ body {
     border-bottom: 1px solid rgba(215, 223, 216, 0.8);
     text-align: left;
     vertical-align: top;
+}
+
+.manager-data-table td {
+    white-space: nowrap;
 }
 
 .manager-data-table th {
@@ -583,32 +871,54 @@ body {
     background: rgba(42, 100, 150, 0.09);
 }
 
-.manager-editor-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 22px;
+.manager-record-panel {
+    margin-top: 0;
 }
 
-.manager-label {
-    display: block;
-    margin: 10px 0 8px;
-    font-size: 0.82rem;
-    font-weight: 700;
+.manager-record-form,
+.manager-record-fields {
+    display: grid;
+    gap: 16px;
+}
+
+.manager-record-fields {
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    margin-top: 12px;
+}
+
+.manager-field {
+    display: grid;
+    gap: 8px;
+    padding: 16px;
+    border-radius: 18px;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.72);
+}
+
+.manager-field-label {
+    font-weight: 800;
+}
+
+.manager-field-meta {
     color: var(--muted);
+    font-size: 0.8rem;
     text-transform: uppercase;
     letter-spacing: 0.08em;
 }
 
-.manager-query-results {
-    margin: 14px 0 0;
-    padding: 16px;
-    border-radius: 16px;
-    background: rgba(20, 28, 34, 0.94);
-    color: #e9eef2;
-    overflow: auto;
-    min-height: 220px;
-    white-space: pre-wrap;
-    word-break: break-word;
+.manager-field-input {
+    width: 100%;
+    border-radius: 14px;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.96);
+    padding: 12px 14px;
+    font: inherit;
+    color: var(--ink);
+}
+
+.manager-field-input:disabled {
+    background: rgba(240, 241, 239, 0.9);
+    color: var(--muted);
 }
 
 .fancy-hero::before {
@@ -722,6 +1032,11 @@ body {
 .cart-panel {
     position: sticky;
     top: 22px;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    max-height: calc(100vh - 44px);
+    overflow: hidden;
 }
 
 .cart-heading {
@@ -793,6 +1108,10 @@ body {
 .page-stack {
     display: grid;
     gap: 22px;
+}
+
+.page-stack > .site-header + .top-nav {
+    margin-top: -22px;
 }
 
 .story-panel,
@@ -887,6 +1206,35 @@ body {
 
 .contact-form-panel {
     background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(247, 244, 239, 0.92));
+}
+
+.contact-form-panel-wide {
+    width: min(860px, 100%);
+    margin-inline: auto;
+    padding: 32px;
+}
+
+.contact-form-panel-wide form {
+    gap: 14px;
+    margin-top: 18px;
+}
+
+.contact-auth-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-top: 16px;
+}
+
+.contact-form-panel-wide input,
+.contact-form-panel-wide textarea,
+.contact-form-panel-wide button {
+    font-size: 1rem;
+}
+
+.contact-form-panel-wide form:has(button:disabled) {
+    opacity: 0.72;
 }
 
 .contact-detail-label {
@@ -1000,6 +1348,10 @@ body {
     display: grid;
     gap: 12px;
     margin-top: 16px;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding-right: 6px;
 }
 
 .cart-item {
@@ -1051,6 +1403,7 @@ body {
     border-top: 1px solid var(--border);
     display: grid;
     gap: 12px;
+    flex-shrink: 0;
 }
 
 .cart-total-row {
@@ -1068,6 +1421,7 @@ body {
 
 .checkout-form {
     margin-top: 16px;
+    flex-shrink: 0;
 }
 
 textarea,
@@ -1080,18 +1434,6 @@ textarea,
     background: var(--panel-strong);
     color: var(--ink);
     resize: vertical;
-}
-
-#manager-row-editor,
-#manager-sql-editor,
-#manager-sql-params {
-    width: 100%;
-    border-radius: 16px;
-    border: 1px solid var(--border);
-    background: rgba(255, 255, 255, 0.92);
-    color: var(--ink);
-    font: 0.95rem/1.5 Consolas, "SFMono-Regular", Monaco, monospace;
-    padding: 14px 16px;
 }
 
 .two-up {
@@ -1448,7 +1790,6 @@ button:hover {
     .fancy-hero,
     .contact-grid,
     .manager-layout,
-    .manager-editor-grid,
     .calendar-hero {
         grid-template-columns: 1fr;
     }
@@ -1496,6 +1837,28 @@ button:hover {
 
     .calendar-day {
         min-height: 0;
+    }
+
+    .calendar-detail-overlay {
+        padding: 14px;
+    }
+
+    .calendar-detail-card {
+        padding: 22px 18px;
+    }
+
+    .orders-detail-overlay {
+        padding: 14px;
+    }
+
+    .orders-detail-card {
+        padding: 22px 18px;
+    }
+
+    .orders-detail-item-header,
+    .orders-detail-line {
+        flex-direction: column;
+        align-items: stretch;
     }
 
     .account-button,

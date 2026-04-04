@@ -54,11 +54,11 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL DEFAULT '',
     event_date TEXT NOT NULL,
     location TEXT NOT NULL DEFAULT '',
     start_time TEXT NOT NULL DEFAULT '',
-    end_time TEXT NOT NULL DEFAULT '',
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    end_time TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS orders (
@@ -69,6 +69,7 @@ CREATE TABLE IF NOT EXISTS orders (
     notes TEXT NOT NULL DEFAULT '',
     payment_status TEXT NOT NULL DEFAULT 'pending' CHECK (payment_status IN ('pending', 'paid', 'failed')),
     square_payment_id TEXT,
+    paid_at TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (customer_id) REFERENCES customers(id)
 );
