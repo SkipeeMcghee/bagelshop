@@ -26,7 +26,12 @@ CREATE TABLE IF NOT EXISTS users (
     name TEXT NOT NULL DEFAULT '',
     email TEXT UNIQUE,
     password_hash TEXT,
+    email_verified INTEGER NOT NULL DEFAULT 1,
+    email_verified_at TEXT,
+    email_verification_token_hash TEXT,
+    email_verification_sent_at TEXT,
     phone TEXT NOT NULL DEFAULT '',
+    isadmin INTEGER NOT NULL DEFAULT 0,
     is_google_account INTEGER NOT NULL DEFAULT 0,
     auth_provider TEXT NOT NULL DEFAULT 'local',
     google_sub TEXT UNIQUE,
@@ -45,6 +50,15 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_date TEXT NOT NULL,
+    location TEXT NOT NULL DEFAULT '',
+    start_time TEXT NOT NULL DEFAULT '',
+    end_time TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS orders (

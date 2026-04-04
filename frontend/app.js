@@ -1,4 +1,4 @@
-const BACKEND_BASE = "http://127.0.0.1:5001";
+const BACKEND_BASE = "http://127.0.0.1:5000";
 const API_BASE = `${BACKEND_BASE}/api`;
 const DEFAULT_PROFILE_IMAGE = "../assets/images/profilepicblank.png";
 
@@ -14,6 +14,7 @@ const checkoutButton = document.getElementById("checkout-button");
 const checkoutMessage = document.getElementById("checkout-message");
 const checkoutEmail = document.getElementById("checkout-email");
 const accountLinks = document.querySelectorAll(".account-link");
+const adminNavLinks = document.querySelectorAll(".admin-nav-link");
 const headerProfileImage = document.getElementById("header-profile-image");
 const headerAccountLabel = document.getElementById("header-account-label");
 const headerAccountStatus = document.getElementById("header-account-status");
@@ -76,6 +77,10 @@ function updateHeaderAccountState(account) {
 
     for (const link of accountLinks) {
         link.href = destination;
+    }
+
+    for (const link of adminNavLinks) {
+        link.hidden = !account?.is_admin;
     }
 
     if (headerProfileImage) {
@@ -181,9 +186,15 @@ function createMenuCard(item) {
 
     header.append(titleBlock, price);
 
+    const availabilityKnown = typeof item.is_available === "boolean" || item.is_available === 0 || item.is_available === 1;
+    const isAvailable = item.is_available === true || item.is_available === 1;
     const availability = document.createElement("span");
-    availability.className = `availability-pill${item.is_available ? "" : " unavailable"}`;
-    availability.textContent = item.is_available ? "Available now" : "Currently unavailable";
+    availability.className = `availability-pill${availabilityKnown && isAvailable ? "" : " unavailable"}`;
+    availability.textContent = !availabilityKnown
+        ? "Checking availability..."
+        : isAvailable
+            ? "Available now"
+            : "Currently unavailable";
 
     const actions = document.createElement("div");
     actions.className = "menu-card-actions";
@@ -196,8 +207,8 @@ function createMenuCard(item) {
     const addButton = document.createElement("button");
     addButton.type = "button";
     addButton.className = "secondary-button add-to-cart-button";
-    addButton.textContent = item.is_available ? "Add to Cart" : "Unavailable";
-    addButton.disabled = !item.is_available;
+    addButton.textContent = !availabilityKnown ? "Checking..." : isAvailable ? "Add to Cart" : "Unavailable";
+    addButton.disabled = !availabilityKnown || !isAvailable;
     addButton.addEventListener("click", () => addToCart(item.id));
 
     actions.append(quantityPill, addButton);
@@ -270,7 +281,10 @@ function renderMenu() {
 
     const groupedItems = groupMenuItemsByCategory(currentMenuItems);
     const categoryCount = groupedItems.size;
-    menuStatus.textContent = `${currentMenuItems.length} item${currentMenuItems.length === 1 ? "" : "s"} across ${categoryCount} categor${categoryCount === 1 ? "y" : "ies"}.`;
+    const awaitingAvailability = currentMenuItems.some((item) => item.is_available === null);
+    menuStatus.textContent = awaitingAvailability
+        ? `Loaded ${currentMenuItems.length} item${currentMenuItems.length === 1 ? "" : "s"}. Checking live Square availability...`
+        : `${currentMenuItems.length} item${currentMenuItems.length === 1 ? "" : "s"} across ${categoryCount} categor${categoryCount === 1 ? "y" : "ies"}.`;
 
     for (const [category, items] of groupedItems.entries()) {
         const section = document.createElement("section");
@@ -323,30 +337,11 @@ function renderCart() {
     checkoutButton.disabled = false;
 }
 
-async function syncMenuFromSquare() {
-    const response = await fetch(`${API_BASE}/square/catalog/sync`, {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-        },
-    });
-
-    if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        throw new Error(data?.error || "Square sync failed");
-    }
-}
-
-async function fetchMenu({ syncWithSquare = false } = {}) {
+async function fetchMenu() {
     menuStatus.textContent = "Loading menu...";
     menuList.innerHTML = "";
 
     try {
-        if (syncWithSquare) {
-            menuStatus.textContent = "Syncing menu from Square...";
-            await syncMenuFromSquare();
-        }
-
         const response = await fetch(`${API_BASE}/menu`);
         const items = await response.json();
 
@@ -415,7 +410,7 @@ async function startCheckout(event) {
 }
 
 if (refreshMenuButton) {
-    refreshMenuButton.addEventListener("click", () => fetchMenu({ syncWithSquare: true }));
+    refreshMenuButton.addEventListener("click", fetchMenu);
 }
 
 if (clearCartButton) {
@@ -436,5 +431,5 @@ getSessionUser().then(updateHeaderAccountState);
 
 if (menuList && menuStatus && refreshMenuButton) {
     renderCart();
-    fetchMenu({ syncWithSquare: true });
+    fetchMenu();
 }

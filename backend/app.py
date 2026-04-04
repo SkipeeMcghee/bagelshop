@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import os
 import json
+import re
 import sqlite3
 import base64
 import hmac
 import hashlib
+import smtplib
 from datetime import datetime, UTC
+from email.message import EmailMessage
 from functools import wraps
 from pathlib import Path
 from typing import Any
@@ -16,6 +19,7 @@ from uuid import uuid4
 
 import requests
 from flask import Flask, jsonify, redirect, request, session
+from dotenv import load_dotenv
 from square.client import Square
 from square.core.api_error import ApiError
 from square.environment import SquareEnvironment
@@ -24,6 +28,8 @@ from werkzeug.security import check_password_hash, generate_password_hash
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "bagelshop.db"
 SCHEMA_PATH = BASE_DIR / "schema.sql"
+
+load_dotenv(BASE_DIR / ".env", override=True)
 
 app = Flask(__name__)
 
@@ -47,6 +53,20 @@ SQUARE_API_VERSION = "2026-01-22"
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
+RECAPTCHA_SITE_KEY = os.getenv("RECAPTCHA_SITE_KEY", "")
+RECAPTCHA_SECRET_KEY = os.getenv("RECAPTCHA_SECRET_KEY", "")
+EMAIL_VERIFICATION_REQUIRED = os.getenv("EMAIL_VERIFICATION_REQUIRED", "1").strip().lower() in {"1", "true", "yes", "on"}
+EMAIL_VERIFICATION_TOKEN_TTL_HOURS = max(
+    1, int(os.getenv("EMAIL_VERIFICATION_TOKEN_TTL_HOURS", "24") or "24")
+)
+SMTP_HOST = os.getenv("SMTP_HOST", "")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587") or "587")
+SMTP_USERNAME = os.getenv("SMTP_USERNAME", "")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
+SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "1").strip().lower() in {"1", "true", "yes", "on"}
+SMTP_USE_SSL = os.getenv("SMTP_USE_SSL", "0").strip().lower() in {"1", "true", "yes", "on"}
+SMTP_FROM_EMAIL = os.getenv("SMTP_FROM_EMAIL", "")
+SMTP_FROM_NAME = os.getenv("SMTP_FROM_NAME", "Everything Bagelry")
 
 FRONTEND_ORIGIN = f"{urlsplit(FRONTEND_BASE_URL).scheme}://{urlsplit(FRONTEND_BASE_URL).netloc}"
 
@@ -250,49 +270,82 @@ def sync_square_catalog_into_menu(
     inserted = 0
     updated = 0
     skipped = 0
+    deleted = 0
+    synced_catalog_ids: list[str] = []
+    synced_variation_ids: list[str] = []
 
     for item in normalized:
         name = str(item.get("name", "")).strip()
         category = str(item.get("category", "") or "").strip()
         description = str(item.get("description", "")).strip()
         price_cents = item.get("price_cents")
-        square_catalog_id = item.get("id")
-        square_variation_id = item.get("variation_id")
+        square_catalog_id = str(item.get("id") or "").strip()
+        square_variation_id = str(item.get("variation_id") or "").strip()
 
         if not name or price_cents is None:
             skipped += 1
             continue
 
+        if square_catalog_id:
+            synced_catalog_ids.append(square_catalog_id)
+        if square_variation_id:
+            synced_variation_ids.append(square_variation_id)
+
         existing = None
         if square_catalog_id:
             existing = conn.execute(
-                "SELECT id FROM menu_items WHERE square_catalog_id = ?",
+                """
+                SELECT id, name, category, description, price_cents,
+                       square_catalog_id, square_variation_id
+                FROM menu_items
+                WHERE square_catalog_id = ?
+                """,
                 (square_catalog_id,),
             ).fetchone()
         if existing is None:
             existing = conn.execute(
-                "SELECT id FROM menu_items WHERE name = ?",
+                """
+                SELECT id, name, category, description, price_cents,
+                       square_catalog_id, square_variation_id
+                FROM menu_items
+                WHERE name = ?
+                """,
                 (name,),
             ).fetchone()
 
         if existing:
-            conn.execute(
-                """
-                UPDATE menu_items
-                SET category = ?, description = ?, price_cents = ?, is_available = 1,
-                    square_catalog_id = ?, square_variation_id = ?
-                WHERE id = ?
-                """,
+            has_changes = any(
                 (
-                    category,
-                    description,
-                    int(price_cents),
-                    square_catalog_id,
-                    square_variation_id,
-                    existing["id"],
-                ),
+                    str(existing["name"] or "").strip() != name,
+                    str(existing["category"] or "").strip() != category,
+                    str(existing["description"] or "").strip() != description,
+                    int(existing["price_cents"] or 0) != int(price_cents),
+                    str(existing["square_catalog_id"] or "").strip()
+                    != square_catalog_id,
+                    str(existing["square_variation_id"] or "").strip()
+                    != square_variation_id,
+                )
             )
-            updated += 1
+
+            if has_changes:
+                conn.execute(
+                    """
+                    UPDATE menu_items
+                    SET name = ?, category = ?, description = ?, price_cents = ?,
+                        square_catalog_id = ?, square_variation_id = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        name,
+                        category,
+                        description,
+                        int(price_cents),
+                        square_catalog_id,
+                        square_variation_id,
+                        existing["id"],
+                    ),
+                )
+                updated += 1
         else:
             conn.execute(
                 """
@@ -312,12 +365,114 @@ def sync_square_catalog_into_menu(
             )
             inserted += 1
 
+    if synced_catalog_ids:
+        placeholders = ", ".join("?" for _ in synced_catalog_ids)
+        delete_cursor = conn.execute(
+            f"""
+            DELETE FROM menu_items
+                        WHERE square_catalog_id IS NULL
+                             OR square_catalog_id NOT IN ({placeholders})
+            """,
+            tuple(synced_catalog_ids),
+        )
+        deleted = delete_cursor.rowcount if delete_cursor.rowcount != -1 else 0
+    else:
+        delete_cursor = conn.execute(
+            "DELETE FROM menu_items WHERE square_catalog_id IS NOT NULL"
+        )
+        deleted = delete_cursor.rowcount if delete_cursor.rowcount != -1 else 0
+
     return {
         "inserted": inserted,
         "updated": updated,
         "skipped": skipped,
+        "deleted": deleted,
         "total_catalog_items": len(normalized),
+        "total_variations": len(list(dict.fromkeys(synced_variation_ids))),
     }
+
+
+def fetch_square_inventory_availability(
+    variation_ids: list[str],
+) -> dict[str, bool] | None:
+    if not variation_ids or not SQUARE_ACCESS_TOKEN or not SQUARE_LOCATION_ID:
+        return None
+
+    unique_variation_ids = list(dict.fromkeys(v for v in variation_ids if v))
+    if not unique_variation_ids:
+        return None
+
+    availability = {variation_id: True for variation_id in unique_variation_ids}
+
+    try:
+        response = requests.post(
+            f"{get_square_api_base_url()}/v2/inventory/batch-retrieve-counts",
+            headers={
+                "Authorization": f"Bearer {SQUARE_ACCESS_TOKEN}",
+                "Square-Version": SQUARE_API_VERSION,
+                "Content-Type": "application/json",
+            },
+            json={
+                "catalog_object_ids": unique_variation_ids,
+                "location_ids": [SQUARE_LOCATION_ID],
+                "states": ["IN_STOCK"],
+            },
+            timeout=20,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except (requests.RequestException, ValueError):
+        return None
+
+    counts_by_variation: dict[str, float] = {variation_id: 0.0 for variation_id in unique_variation_ids}
+    returned_variation_ids: set[str] = set()
+    for raw_count in payload.get("counts", []) or payload.get("inventory_counts", []) or []:
+        count_data = model_to_dict(raw_count)
+        variation_id = str(count_data.get("catalog_object_id") or "").strip()
+        if variation_id not in counts_by_variation:
+            continue
+        returned_variation_ids.add(variation_id)
+        try:
+            counts_by_variation[variation_id] += float(count_data.get("quantity") or 0)
+        except (TypeError, ValueError):
+            continue
+
+    for variation_id in returned_variation_ids:
+        availability[variation_id] = counts_by_variation[variation_id] > 0
+
+    return availability
+
+
+def refresh_square_menu_cache(conn: sqlite3.Connection) -> dict[str, Any]:
+    sync_result = sync_square_catalog_into_menu(conn)
+    variation_rows = conn.execute(
+        """
+        SELECT square_variation_id
+        FROM menu_items
+        WHERE square_catalog_id IS NOT NULL AND square_variation_id IS NOT NULL
+        """
+    ).fetchall()
+    variation_ids = [str(row["square_variation_id"] or "").strip() for row in variation_rows]
+    availability_map = fetch_square_inventory_availability(variation_ids)
+
+    if availability_map is not None:
+        for variation_id, is_available in availability_map.items():
+            conn.execute(
+                "UPDATE menu_items SET is_available = ? WHERE square_variation_id = ?",
+                (1 if is_available else 0, variation_id),
+            )
+
+    return {
+        **sync_result,
+        "availability_live": availability_map is not None,
+    }
+
+
+def get_cached_square_menu_count(conn: sqlite3.Connection) -> int:
+    row = conn.execute(
+        "SELECT COUNT(*) AS count FROM menu_items WHERE square_catalog_id IS NOT NULL"
+    ).fetchone()
+    return int(row["count"] if row else 0)
 
 
 def is_safe_absolute_http_url(value: str) -> bool:
@@ -338,6 +493,8 @@ def init_db() -> None:
         conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
         ensure_orders_schema_columns(conn)
         ensure_users_schema_columns(conn)
+        ensure_events_schema(conn)
+        promote_default_admin(conn)
         conn.commit()
     finally:
         conn.close()
@@ -377,7 +534,12 @@ def ensure_users_schema_columns(conn: sqlite3.Connection) -> None:
             name TEXT NOT NULL DEFAULT '',
             email TEXT UNIQUE,
             password_hash TEXT,
+            email_verified INTEGER NOT NULL DEFAULT 1,
+            email_verified_at TEXT,
+            email_verification_token_hash TEXT,
+            email_verification_sent_at TEXT,
             phone TEXT NOT NULL DEFAULT '',
+            isadmin INTEGER NOT NULL DEFAULT 0,
             is_google_account INTEGER NOT NULL DEFAULT 0,
             auth_provider TEXT NOT NULL DEFAULT 'local',
             google_sub TEXT UNIQUE,
@@ -407,7 +569,42 @@ def ensure_users_schema_columns(conn: sqlite3.Connection) -> None:
         "username" in user_columns
         or "display_name" in user_columns
         or "profile_image_url" in user_columns
+        or "is_admin" in user_columns
     ):
+        conn.execute("DROP TABLE IF EXISTS users__new")
+
+        legacy_name_expr = (
+            "CASE "
+            "WHEN COALESCE(name, '') <> '' THEN name "
+            "WHEN COALESCE(email, '') <> '' THEN email "
+            "ELSE 'Account' END"
+        )
+        if "display_name" in user_columns:
+            legacy_name_expr = (
+                "CASE "
+                "WHEN COALESCE(display_name, '') <> '' THEN display_name "
+                "WHEN COALESCE(username, '') <> '' THEN username "
+                "WHEN COALESCE(email, '') <> '' THEN email "
+                "ELSE 'Account' END"
+            )
+        elif "username" in user_columns:
+            legacy_name_expr = (
+                "CASE "
+                "WHEN COALESCE(username, '') <> '' THEN username "
+                "WHEN COALESCE(email, '') <> '' THEN email "
+                "ELSE 'Account' END"
+            )
+
+        legacy_google_expr = "0"
+        if "is_google_account" in user_columns:
+            legacy_google_expr = "COALESCE(is_google_account, 0)"
+
+        legacy_admin_expr = "0"
+        if "isadmin" in user_columns:
+            legacy_admin_expr = "COALESCE(isadmin, 0)"
+        elif "is_admin" in user_columns:
+            legacy_admin_expr = "COALESCE(is_admin, 0)"
+
         conn.execute(
             """
             CREATE TABLE users__new (
@@ -416,7 +613,12 @@ def ensure_users_schema_columns(conn: sqlite3.Connection) -> None:
                 name TEXT NOT NULL DEFAULT '',
                 email TEXT UNIQUE,
                 password_hash TEXT,
+                email_verified INTEGER NOT NULL DEFAULT 1,
+                email_verified_at TEXT,
+                email_verification_token_hash TEXT,
+                email_verification_sent_at TEXT,
                 phone TEXT NOT NULL DEFAULT '',
+                isadmin INTEGER NOT NULL DEFAULT 0,
                 is_google_account INTEGER NOT NULL DEFAULT 0,
                 auth_provider TEXT NOT NULL DEFAULT 'local',
                 google_sub TEXT UNIQUE,
@@ -441,7 +643,10 @@ def ensure_users_schema_columns(conn: sqlite3.Connection) -> None:
         conn.execute(
             """
             INSERT INTO users__new (
-                id, customer_id, name, email, password_hash, phone,
+                id, customer_id, name, email, password_hash,
+                email_verified, email_verified_at, email_verification_token_hash,
+                email_verification_sent_at, phone,
+                isadmin,
                 is_google_account, auth_provider, google_sub,
                 shipping_address_line1, shipping_address_line2, shipping_city,
                 shipping_state, shipping_postal_code, shipping_country,
@@ -452,32 +657,42 @@ def ensure_users_schema_columns(conn: sqlite3.Connection) -> None:
             SELECT
                 id,
                 customer_id,
-                CASE
-                    WHEN COALESCE(name, '') <> '' THEN name
-                    WHEN COALESCE(email, '') <> '' THEN email
-                    ELSE 'Account'
-                END,
+                """
+            + legacy_name_expr
+            +
+            """,
                 email,
                 password_hash,
+                1,
+                NULL,
+                NULL,
+                NULL,
                 COALESCE(phone, ''),
+                """
+            + legacy_admin_expr
+            +
+            """,
                 CASE
                     WHEN auth_provider = 'google' OR COALESCE(google_sub, '') <> '' THEN 1
-                    ELSE COALESCE(is_google_account, 0)
+                    ELSE """
+            + legacy_google_expr
+            +
+            """
                 END,
                 COALESCE(auth_provider, 'local'),
                 google_sub,
-                COALESCE(shipping_address_line1, ''),
-                COALESCE(shipping_address_line2, ''),
-                COALESCE(shipping_city, ''),
-                COALESCE(shipping_state, ''),
-                COALESCE(shipping_postal_code, ''),
-                COALESCE(shipping_country, ''),
-                COALESCE(billing_address_line1, ''),
-                COALESCE(billing_address_line2, ''),
-                COALESCE(billing_city, ''),
-                COALESCE(billing_state, ''),
-                COALESCE(billing_postal_code, ''),
-                COALESCE(billing_country, ''),
+                '',
+                '',
+                '',
+                '',
+                '',
+                '',
+                '',
+                '',
+                '',
+                '',
+                '',
+                '',
                 COALESCE(created_at, CURRENT_TIMESTAMP),
                 COALESCE(updated_at, CURRENT_TIMESTAMP)
             FROM users
@@ -494,7 +709,12 @@ def ensure_users_schema_columns(conn: sqlite3.Connection) -> None:
         ("name", "TEXT NOT NULL DEFAULT ''"),
         ("email", "TEXT"),
         ("password_hash", "TEXT"),
+        ("email_verified", "INTEGER NOT NULL DEFAULT 1"),
+        ("email_verified_at", "TEXT"),
+        ("email_verification_token_hash", "TEXT"),
+        ("email_verification_sent_at", "TEXT"),
         ("phone", "TEXT NOT NULL DEFAULT ''"),
+        ("isadmin", "INTEGER NOT NULL DEFAULT 0"),
         ("is_google_account", "INTEGER NOT NULL DEFAULT 0"),
         ("auth_provider", "TEXT NOT NULL DEFAULT 'local'"),
         ("google_sub", "TEXT"),
@@ -529,9 +749,167 @@ def ensure_users_schema_columns(conn: sqlite3.Connection) -> None:
         """
     )
 
+    conn.execute(
+        """
+        UPDATE users
+        SET isadmin = CASE
+            WHEN isadmin IN (1, '1', 'true', 'TRUE', 'yes', 'YES', 'on', 'ON') THEN 1
+            ELSE 0
+        END
+        WHERE isadmin NOT IN (0, 1)
+           OR isadmin IS NULL
+        """
+    )
+
+
+def ensure_events_schema(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_date TEXT NOT NULL,
+            location TEXT NOT NULL DEFAULT '',
+            start_time TEXT NOT NULL DEFAULT '',
+            end_time TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+
+    event_columns = {
+        row["name"] for row in conn.execute("PRAGMA table_info(events)").fetchall()
+    }
+    for column_name, definition in (
+        ("event_date", "TEXT NOT NULL DEFAULT ''"),
+        ("location", "TEXT NOT NULL DEFAULT ''"),
+        ("start_time", "TEXT NOT NULL DEFAULT ''"),
+        ("end_time", "TEXT NOT NULL DEFAULT ''"),
+        ("created_at", "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP"),
+    ):
+        if column_name not in event_columns:
+            conn.execute(f"ALTER TABLE events ADD COLUMN {column_name} {definition}")
+
+
+def promote_default_admin(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        UPDATE users
+        SET isadmin = 1,
+            name = CASE
+                WHEN LOWER(COALESCE(email, '')) = LOWER(?) THEN ?
+                ELSE name
+            END,
+            updated_at = ?
+        WHERE LOWER(COALESCE(email, '')) = LOWER(?)
+           OR LOWER(COALESCE(name, '')) = LOWER(?)
+        """,
+        ("brianheise22@gmail.com", "Brian Heise", now_iso(), "brianheise22@gmail.com", "Brian Heise"),
+    )
+
 
 def now_iso() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def is_recaptcha_enabled() -> bool:
+    return bool(RECAPTCHA_SITE_KEY and RECAPTCHA_SECRET_KEY)
+
+
+def is_email_verification_enabled() -> bool:
+    return EMAIL_VERIFICATION_REQUIRED
+
+
+def hash_verification_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def verification_link_for_token(token: str) -> str:
+    return f"{BACKEND_BASE_URL.rstrip('/')}/auth/verify-email?token={token}"
+
+
+def build_email_verification_message(name: str, verification_link: str) -> tuple[str, str]:
+    subject = "Verify your Everything Bagelry account"
+    display_name = name or "there"
+    body = (
+        f"Hi {display_name},\n\n"
+        "Thanks for signing up for Everything Bagelry. Verify your email by opening this link:\n\n"
+        f"{verification_link}\n\n"
+        f"This link expires in {EMAIL_VERIFICATION_TOKEN_TTL_HOURS} hours.\n"
+    )
+    return subject, body
+
+
+def send_email_message(*, to_email: str, subject: str, body: str) -> str:
+    if SMTP_HOST and SMTP_FROM_EMAIL:
+        message = EmailMessage()
+        message["Subject"] = subject
+        message["From"] = (
+            f"{SMTP_FROM_NAME} <{SMTP_FROM_EMAIL}>" if SMTP_FROM_NAME else SMTP_FROM_EMAIL
+        )
+        message["To"] = to_email
+        message.set_content(body)
+
+        if SMTP_USE_SSL:
+            with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=20) as server:
+                if SMTP_USERNAME:
+                    server.login(SMTP_USERNAME, SMTP_PASSWORD)
+                server.send_message(message)
+        else:
+            with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20) as server:
+                if SMTP_USE_TLS:
+                    server.starttls()
+                if SMTP_USERNAME:
+                    server.login(SMTP_USERNAME, SMTP_PASSWORD)
+                server.send_message(message)
+        return "smtp"
+
+    print(f"[email verification] To: {to_email}\nSubject: {subject}\n\n{body}", flush=True)
+    return "console"
+
+
+def issue_email_verification(conn: sqlite3.Connection, user: sqlite3.Row) -> dict[str, str]:
+    if not user["email"]:
+        raise ValueError("Email is required for verification")
+
+    raw_token = token_urlsafe(32)
+    token_hash = hash_verification_token(raw_token)
+    sent_at = now_iso()
+    conn.execute(
+        """
+        UPDATE users
+        SET email_verification_token_hash = ?, email_verification_sent_at = ?, updated_at = ?
+        WHERE id = ?
+        """,
+        (token_hash, sent_at, sent_at, user["id"]),
+    )
+    verification_link = verification_link_for_token(raw_token)
+    subject, body = build_email_verification_message(user["name"], verification_link)
+    delivery = send_email_message(to_email=str(user["email"]), subject=subject, body=body)
+    return {"verification_link": verification_link, "delivery": delivery}
+
+
+def verify_recaptcha_token(token: str, remote_ip: str = "") -> bool:
+    if not is_recaptcha_enabled():
+        return True
+    if not token:
+        return False
+
+    try:
+        response = requests.post(
+            "https://www.google.com/recaptcha/api/siteverify",
+            data={
+                "secret": RECAPTCHA_SECRET_KEY,
+                "response": token,
+                "remoteip": remote_ip,
+            },
+            timeout=15,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except (requests.RequestException, ValueError):
+        return False
+
+    return bool(payload.get("success"))
 
 
 def get_public_user_dict(
@@ -549,6 +927,9 @@ def get_public_user_dict(
         "customer_id": row["customer_id"],
         "name": row["name"],
         "email": row["email"],
+        "is_admin": bool(row["isadmin"]),
+        "email_verified": bool(row["email_verified"]),
+        "email_verified_at": row["email_verified_at"],
         "phone": row["phone"],
         "profile_image_url": profile_image_url,
         "is_google_account": bool(row["is_google_account"]),
@@ -585,14 +966,18 @@ def get_session_user_dict(
         "email": row["email"],
         "name": row["name"] or row["email"] or "",
         "picture": picture,
+        "is_admin": bool(row["isadmin"]),
         "is_google_account": bool(row["is_google_account"]),
+        "email_verified": bool(row["email_verified"]),
     }
 
 
 def get_user_by_id(conn: sqlite3.Connection, user_id: int) -> sqlite3.Row | None:
     return conn.execute(
         """
-        SELECT id, customer_id, name, email, password_hash, phone,
+                SELECT id, customer_id, name, email, password_hash,
+                             email_verified, email_verified_at, email_verification_token_hash,
+                             email_verification_sent_at, phone, isadmin,
                is_google_account, auth_provider, google_sub,
              shipping_address_line1, shipping_address_line2, shipping_city,
              shipping_state, shipping_postal_code, shipping_country,
@@ -677,6 +1062,81 @@ def login_required(view_func):
     return wrapped
 
 
+def admin_required(view_func):
+    @wraps(view_func)
+    def wrapped(*args, **kwargs):
+        if not session.get("user_id"):
+            if request.path.startswith("/api/"):
+                return jsonify({"error": "Authentication required"}), 401
+            return redirect("/login")
+
+        conn = get_db()
+        try:
+            user = get_current_user(conn)
+            if user is None:
+                clear_logged_in_user()
+                return jsonify({"error": "Authentication required"}), 401
+            if not bool(user["isadmin"]):
+                return jsonify({"error": "Admin access required"}), 403
+        finally:
+            conn.close()
+
+        return view_func(*args, **kwargs)
+
+    return wrapped
+
+
+IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def is_valid_identifier(value: str) -> bool:
+    return bool(IDENTIFIER_RE.fullmatch(value or ""))
+
+
+def get_database_table_names(conn: sqlite3.Connection) -> list[str]:
+    rows = conn.execute(
+        """
+        SELECT name
+        FROM sqlite_master
+        WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+        ORDER BY LOWER(name) ASC
+        """
+    ).fetchall()
+    return [str(row["name"]) for row in rows]
+
+
+def require_table_name(conn: sqlite3.Connection, table_name: str) -> str:
+    normalized = str(table_name or "").strip()
+    if not is_valid_identifier(normalized):
+        raise ValueError("Invalid table name")
+    if normalized not in get_database_table_names(conn):
+        raise LookupError("Table not found")
+    return normalized
+
+
+def get_table_columns(conn: sqlite3.Connection, table_name: str) -> list[dict[str, Any]]:
+    normalized = require_table_name(conn, table_name)
+    rows = conn.execute(f"PRAGMA table_info({normalized})").fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_table_primary_key_column(conn: sqlite3.Connection, table_name: str) -> str | None:
+    for column in get_table_columns(conn, table_name):
+        if int(column.get("pk") or 0) == 1:
+            return str(column["name"])
+    return None
+
+
+def sanitize_row_payload(conn: sqlite3.Connection, table_name: str, payload: dict[str, Any]) -> dict[str, Any]:
+    allowed_columns = {str(column["name"]) for column in get_table_columns(conn, table_name)}
+    cleaned: dict[str, Any] = {}
+    for key, value in (payload or {}).items():
+        key_name = str(key or "").strip()
+        if key_name and key_name in allowed_columns:
+            cleaned[key_name] = value
+    return cleaned
+
+
 def get_allowed_origin() -> str | None:
     request_origin = request.headers.get("Origin", "").strip()
     if request_origin and request_origin == FRONTEND_ORIGIN:
@@ -721,6 +1181,283 @@ def get_current_session_user():
         conn.close()
 
 
+@app.get("/api/auth/config")
+def get_auth_config():
+    return jsonify(
+        {
+            "recaptcha_enabled": is_recaptcha_enabled(),
+            "recaptcha_site_key": RECAPTCHA_SITE_KEY if is_recaptcha_enabled() else "",
+            "email_verification_required": is_email_verification_enabled(),
+        }
+    ), 200
+
+
+@app.get("/api/events")
+def get_events():
+    month = str(request.args.get("month", "") or "").strip()
+    start_date = str(request.args.get("start", "") or "").strip()
+    end_date = str(request.args.get("end", "") or "").strip()
+
+    if month:
+        try:
+            year_str, month_str = month.split("-", 1)
+            year = int(year_str)
+            month_number = int(month_str)
+            if month_number < 1 or month_number > 12:
+                raise ValueError
+        except ValueError:
+            return jsonify({"error": "month must be in YYYY-MM format"}), 400
+
+        start_date = f"{year:04d}-{month_number:02d}-01"
+        if month_number == 12:
+            end_date = f"{year + 1:04d}-01-01"
+        else:
+            end_date = f"{year:04d}-{month_number + 1:02d}-01"
+
+    conn = get_db()
+    try:
+        if start_date and end_date:
+            rows = conn.execute(
+                """
+                SELECT id, event_date, location, start_time, end_time, created_at
+                FROM events
+                WHERE event_date >= ? AND event_date < ?
+                ORDER BY event_date ASC, start_time ASC, end_time ASC, id ASC
+                """,
+                (start_date, end_date),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT id, event_date, location, start_time, end_time, created_at
+                FROM events
+                ORDER BY event_date ASC, start_time ASC, end_time ASC, id ASC
+                """
+            ).fetchall()
+    finally:
+        conn.close()
+
+    return jsonify([dict(row) for row in rows]), 200
+
+
+@app.get("/api/admin/db/tables")
+@admin_required
+def admin_list_tables():
+    conn = get_db()
+    try:
+        tables = []
+        for table_name in get_database_table_names(conn):
+            columns = get_table_columns(conn, table_name)
+            row_count = conn.execute(f"SELECT COUNT(*) AS count FROM {table_name}").fetchone()["count"]
+            tables.append(
+                {
+                    "name": table_name,
+                    "row_count": row_count,
+                    "primary_key": get_table_primary_key_column(conn, table_name),
+                    "columns": columns,
+                }
+            )
+    finally:
+        conn.close()
+
+    return jsonify(tables), 200
+
+
+@app.get("/api/admin/db/tables/<table_name>")
+@admin_required
+def admin_get_table_rows(table_name: str):
+    conn = get_db()
+    try:
+        normalized_table = require_table_name(conn, table_name)
+        limit = max(1, min(int(request.args.get("limit", 100) or 100), 500))
+        offset = max(0, int(request.args.get("offset", 0) or 0))
+        primary_key = get_table_primary_key_column(conn, normalized_table)
+        order_column = primary_key or "rowid"
+        rows = conn.execute(
+            f"SELECT * FROM {normalized_table} ORDER BY {order_column} DESC LIMIT ? OFFSET ?",
+            (limit, offset),
+        ).fetchall()
+        total_rows = conn.execute(
+            f"SELECT COUNT(*) AS count FROM {normalized_table}"
+        ).fetchone()["count"]
+        columns = get_table_columns(conn, normalized_table)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except LookupError as exc:
+        return jsonify({"error": str(exc)}), 404
+    finally:
+        conn.close()
+
+    return jsonify(
+        {
+            "table": table_name,
+            "primary_key": primary_key,
+            "columns": columns,
+            "limit": limit,
+            "offset": offset,
+            "total_rows": total_rows,
+            "rows": [dict(row) for row in rows],
+        }
+    ), 200
+
+
+@app.post("/api/admin/db/tables/<table_name>/rows")
+@admin_required
+def admin_insert_row(table_name: str):
+    data = request.get_json(silent=True) or {}
+    payload = data.get("row") if isinstance(data.get("row"), dict) else data
+
+    conn = get_db()
+    try:
+        normalized_table = require_table_name(conn, table_name)
+        row_data = sanitize_row_payload(conn, normalized_table, payload)
+        columns = list(row_data.keys())
+
+        if columns:
+            placeholders = ", ".join("?" for _ in columns)
+            quoted_columns = ", ".join(columns)
+            cursor = conn.execute(
+                f"INSERT INTO {normalized_table} ({quoted_columns}) VALUES ({placeholders})",
+                tuple(row_data[column] for column in columns),
+            )
+        else:
+            cursor = conn.execute(f"INSERT INTO {normalized_table} DEFAULT VALUES")
+
+        conn.commit()
+
+        primary_key = get_table_primary_key_column(conn, normalized_table)
+        inserted_row = None
+        if primary_key and cursor.lastrowid is not None:
+            inserted_row = conn.execute(
+                f"SELECT * FROM {normalized_table} WHERE {primary_key} = ?",
+                (cursor.lastrowid,),
+            ).fetchone()
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except LookupError as exc:
+        return jsonify({"error": str(exc)}), 404
+    except sqlite3.Error as exc:
+        conn.rollback()
+        return jsonify({"error": str(exc)}), 400
+    finally:
+        conn.close()
+
+    return jsonify({
+        "message": "Row inserted",
+        "row": dict(inserted_row) if inserted_row is not None else None,
+    }), 201
+
+
+@app.patch("/api/admin/db/tables/<table_name>/rows/<row_id>")
+@admin_required
+def admin_update_row(table_name: str, row_id: str):
+    data = request.get_json(silent=True) or {}
+    payload = data.get("row") if isinstance(data.get("row"), dict) else data
+
+    conn = get_db()
+    try:
+        normalized_table = require_table_name(conn, table_name)
+        primary_key = get_table_primary_key_column(conn, normalized_table)
+        if not primary_key:
+            return jsonify({"error": "This table has no primary key"}), 400
+
+        row_data = sanitize_row_payload(conn, normalized_table, payload)
+        row_data.pop(primary_key, None)
+        if not row_data:
+            return jsonify({"error": "No editable columns provided"}), 400
+
+        assignments = ", ".join(f"{column} = ?" for column in row_data)
+        cursor = conn.execute(
+            f"UPDATE {normalized_table} SET {assignments} WHERE {primary_key} = ?",
+            tuple(row_data[column] for column in row_data) + (row_id,),
+        )
+        if cursor.rowcount == 0:
+            conn.rollback()
+            return jsonify({"error": "Row not found"}), 404
+
+        conn.commit()
+        updated_row = conn.execute(
+            f"SELECT * FROM {normalized_table} WHERE {primary_key} = ?",
+            (row_id,),
+        ).fetchone()
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except LookupError as exc:
+        return jsonify({"error": str(exc)}), 404
+    except sqlite3.Error as exc:
+        conn.rollback()
+        return jsonify({"error": str(exc)}), 400
+    finally:
+        conn.close()
+
+    return jsonify({"message": "Row updated", "row": dict(updated_row)}), 200
+
+
+@app.delete("/api/admin/db/tables/<table_name>/rows/<row_id>")
+@admin_required
+def admin_delete_row(table_name: str, row_id: str):
+    conn = get_db()
+    try:
+        normalized_table = require_table_name(conn, table_name)
+        primary_key = get_table_primary_key_column(conn, normalized_table)
+        if not primary_key:
+            return jsonify({"error": "This table has no primary key"}), 400
+
+        cursor = conn.execute(
+            f"DELETE FROM {normalized_table} WHERE {primary_key} = ?",
+            (row_id,),
+        )
+        if cursor.rowcount == 0:
+            conn.rollback()
+            return jsonify({"error": "Row not found"}), 404
+
+        conn.commit()
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except LookupError as exc:
+        return jsonify({"error": str(exc)}), 404
+    except sqlite3.Error as exc:
+        conn.rollback()
+        return jsonify({"error": str(exc)}), 400
+    finally:
+        conn.close()
+
+    return jsonify({"message": "Row deleted"}), 200
+
+
+@app.post("/api/admin/db/query")
+@admin_required
+def admin_execute_query():
+    data = request.get_json(silent=True) or {}
+    sql = str(data.get("sql", "") or "").strip()
+    params = data.get("params", [])
+
+    if not sql:
+        return jsonify({"error": "sql is required"}), 400
+    if not isinstance(params, list):
+        return jsonify({"error": "params must be a list"}), 400
+
+    conn = get_db()
+    try:
+        cursor = conn.execute(sql, tuple(params))
+        if cursor.description is not None:
+            rows = [dict(row) for row in cursor.fetchall()]
+            return jsonify({"rows": rows, "row_count": len(rows)}), 200
+
+        conn.commit()
+        return jsonify(
+            {
+                "row_count": cursor.rowcount if cursor.rowcount != -1 else 0,
+                "lastrowid": cursor.lastrowid,
+            }
+        ), 200
+    except sqlite3.Error as exc:
+        conn.rollback()
+        return jsonify({"error": str(exc)}), 400
+    finally:
+        conn.close()
+
+
 @app.get("/login")
 def login_page():
     return frontend_redirect("auth.html")
@@ -738,6 +1475,7 @@ def register_local_user():
     name = str(data.get("name", "")).strip()
     email = str(data.get("email", "")).strip().lower()
     password = str(data.get("password", ""))
+    recaptcha_token = str(data.get("recaptcha_token", "")).strip()
 
     if not name:
         return jsonify({"error": "name is required"}), 400
@@ -745,6 +1483,8 @@ def register_local_user():
         return jsonify({"error": "email is required"}), 400
     if len(password) < 6:
         return jsonify({"error": "password must be at least 6 characters"}), 400
+    if not verify_recaptcha_token(recaptcha_token, request.remote_addr or ""):
+        return jsonify({"error": "reCAPTCHA verification failed"}), 400
 
     conn = get_db()
     try:
@@ -759,24 +1499,45 @@ def register_local_user():
         cursor = conn.execute(
             """
             INSERT INTO users (
-                customer_id, name, email, password_hash, phone,
+                customer_id, name, email, password_hash,
+                email_verified, email_verified_at, email_verification_token_hash,
+                email_verification_sent_at, phone,
                 is_google_account, auth_provider, updated_at
             )
-            VALUES (?, ?, ?, ?, '', 0, 'local', ?)
+            VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, '', 0, 'local', ?)
             """,
             (
                 customer_id,
                 name,
                 email or None,
                 generate_password_hash(password),
+                0 if is_email_verification_enabled() else 1,
                 now_iso(),
             ),
         )
         user_id = int(cursor.lastrowid)
+        user = get_user_by_id(conn, user_id)
+        verification_delivery = ""
+        if user is not None and is_email_verification_enabled():
+            verification_delivery = issue_email_verification(conn, user)["delivery"]
         conn.commit()
         user = get_user_by_id(conn, user_id)
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
+
+    if is_email_verification_enabled():
+        return jsonify(
+            {
+                "authenticated": False,
+                "verification_required": True,
+                "message": "Account created. Check your email for a verification link before signing in.",
+                "email": email,
+                "delivery": verification_delivery,
+            }
+        ), 201
 
     set_logged_in_user(user_id, user)
     return jsonify({"authenticated": True, "user": get_public_user_dict(user)}), 201
@@ -795,7 +1556,9 @@ def login_local_user():
     try:
         user = conn.execute(
             """
-            SELECT id, customer_id, name, email, password_hash, phone,
+            SELECT id, customer_id, name, email, password_hash,
+                     email_verified, email_verified_at, email_verification_token_hash,
+                     email_verification_sent_at, phone, isadmin,
                      is_google_account, auth_provider, google_sub,
                      shipping_address_line1, shipping_address_line2, shipping_city,
                      shipping_state, shipping_postal_code, shipping_country,
@@ -810,6 +1573,14 @@ def login_local_user():
         ).fetchone()
         if user is None or not user["password_hash"] or not check_password_hash(user["password_hash"], password):
             return jsonify({"error": "Incorrect email or password"}), 401
+        if not bool(user["is_google_account"]) and is_email_verification_enabled() and not bool(user["email_verified"]):
+            return jsonify(
+                {
+                    "error": "Please verify your email before signing in.",
+                    "verification_required": True,
+                    "email": email,
+                }
+            ), 403
         authenticated_user = user
     finally:
         conn.close()
@@ -825,6 +1596,100 @@ def login_local_user():
 def logout_user():
     clear_logged_in_user()
     return jsonify({"ok": True}), 200
+
+
+@app.post("/api/auth/resend-verification")
+def resend_verification_email():
+    data = request.get_json(silent=True) or {}
+    email = str(data.get("email", "")).strip().lower()
+    if not email:
+        return jsonify({"error": "email is required"}), 400
+
+    conn = get_db()
+    try:
+        user = conn.execute(
+            """
+            SELECT id, customer_id, name, email, password_hash,
+                   email_verified, email_verified_at, email_verification_token_hash,
+                   email_verification_sent_at, phone,
+                   is_google_account, auth_provider, google_sub,
+                   shipping_address_line1, shipping_address_line2, shipping_city,
+                   shipping_state, shipping_postal_code, shipping_country,
+                   billing_address_line1, billing_address_line2, billing_city,
+                   billing_state, billing_postal_code, billing_country,
+                   created_at, updated_at
+            FROM users
+            WHERE email = ?
+            LIMIT 1
+            """,
+            (email,),
+        ).fetchone()
+        if user is None:
+            return jsonify({"error": "No account found with that email"}), 404
+        if bool(user["email_verified"]):
+            return jsonify({"message": "That email address is already verified."}), 200
+
+        verification_delivery = issue_email_verification(conn, user)["delivery"]
+        conn.commit()
+    finally:
+        conn.close()
+
+    return jsonify({"message": "Verification email sent.", "delivery": verification_delivery}), 200
+
+
+@app.get("/auth/verify-email")
+def verify_email_address():
+    token = str(request.args.get("token", "")).strip()
+    if not token:
+        return frontend_redirect("auth.html", error="missing_verification_token")
+
+    token_hash = hash_verification_token(token)
+    conn = get_db()
+    try:
+        user = conn.execute(
+            """
+            SELECT id, customer_id, name, email, password_hash,
+                   email_verified, email_verified_at, email_verification_token_hash,
+                   email_verification_sent_at, phone,
+                   is_google_account, auth_provider, google_sub,
+                   shipping_address_line1, shipping_address_line2, shipping_city,
+                   shipping_state, shipping_postal_code, shipping_country,
+                   billing_address_line1, billing_address_line2, billing_city,
+                   billing_state, billing_postal_code, billing_country,
+                   created_at, updated_at
+            FROM users
+            WHERE email_verification_token_hash = ?
+            LIMIT 1
+            """,
+            (token_hash,),
+        ).fetchone()
+        if user is None:
+            return frontend_redirect("auth.html", error="invalid_verification_token")
+
+        sent_at = str(user["email_verification_sent_at"] or "").strip()
+        if sent_at:
+            sent_at_dt = datetime.fromisoformat(sent_at)
+            age_seconds = (datetime.now(UTC) - sent_at_dt).total_seconds()
+            if age_seconds > EMAIL_VERIFICATION_TOKEN_TTL_HOURS * 3600:
+                return frontend_redirect("auth.html", error="verification_link_expired")
+
+        conn.execute(
+            """
+            UPDATE users
+            SET email_verified = 1,
+                email_verified_at = ?,
+                email_verification_token_hash = NULL,
+                email_verification_sent_at = NULL,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (now_iso(), now_iso(), user["id"]),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    return frontend_redirect("auth.html", verified="1", email=str(user["email"] or ""))
 
 
 @app.get("/auth/google/start")
@@ -903,7 +1768,9 @@ def finish_google_auth():
     try:
         user = conn.execute(
             """
-            SELECT id, customer_id, name, email, password_hash, phone,
+            SELECT id, customer_id, name, email, password_hash,
+                     email_verified, email_verified_at, email_verification_token_hash,
+                     email_verification_sent_at, phone,
                      is_google_account, auth_provider, google_sub,
                      shipping_address_line1, shipping_address_line2, shipping_city,
                      shipping_state, shipping_postal_code, shipping_country,
@@ -923,15 +1790,18 @@ def finish_google_auth():
             cursor = conn.execute(
                 """
                 INSERT INTO users (
-                    customer_id, name, email, password_hash, phone,
+                    customer_id, name, email, password_hash,
+                    email_verified, email_verified_at, email_verification_token_hash,
+                    email_verification_sent_at, phone,
                     is_google_account, auth_provider, google_sub, updated_at
                 )
-                VALUES (?, ?, ?, NULL, '', 1, 'google', ?, ?)
+                VALUES (?, ?, ?, NULL, 1, ?, NULL, NULL, '', 1, 'google', ?, ?)
                 """,
                 (
                     customer_id,
                     name,
                     email,
+                    now_iso(),
                     google_sub,
                     now_iso(),
                 ),
@@ -944,10 +1814,14 @@ def finish_google_auth():
                 """
                 UPDATE users
                 SET name = ?, email = ?,
-                    is_google_account = 1, auth_provider = 'google', google_sub = ?, updated_at = ?
+                    is_google_account = 1, auth_provider = 'google', google_sub = ?,
+                    email_verified = 1, email_verified_at = ?,
+                    email_verification_token_hash = NULL,
+                    email_verification_sent_at = NULL,
+                    updated_at = ?
                 WHERE id = ?
                 """,
-                (name, email, google_sub, now_iso(), user["id"]),
+                (name, email, google_sub, now_iso(), now_iso(), user["id"]),
             )
             user_id = int(user["id"])
 
@@ -1006,11 +1880,7 @@ def sync_square_catalog_to_menu():
     conn = get_db()
     try:
         try:
-            sync_result = sync_square_catalog_into_menu(
-                conn,
-                text_filter=text_filter,
-                limit=100,
-            )
+            sync_result = refresh_square_menu_cache(conn)
         except ApiError as exc:
             return jsonify({"error": "Square catalog request failed", "details": str(exc)}), 502
         conn.commit()
@@ -1144,23 +2014,24 @@ def create_local_order(
 def get_menu_items():
     conn = get_db()
     try:
-        query = """
-            SELECT id, name, category, description, price_cents, is_available, created_at
-            FROM menu_items
-        """
-        params: tuple[Any, ...] = ()
+        use_square_menu_only = False
+        availability_live = False
 
         if SQUARE_ACCESS_TOKEN:
             try:
-                sync_square_catalog_into_menu(conn)
+                sync_result = refresh_square_menu_cache(conn)
                 conn.commit()
-            except ApiError:
+                availability_live = bool(sync_result.get("availability_live"))
+            except (ApiError, requests.RequestException):
                 conn.rollback()
-            query += " WHERE square_catalog_id IS NOT NULL"
+            use_square_menu_only = get_cached_square_menu_count(conn) > 0
 
         rows = conn.execute(
-            f"""
-            {query}
+            """
+            SELECT id, name, category, description, price_cents, is_available,
+                   square_catalog_id, square_variation_id, created_at
+            FROM menu_items
+            WHERE (? = 0 OR square_catalog_id IS NOT NULL)
             ORDER BY
                 CASE
                     WHEN TRIM(COALESCE(category, '')) = '' THEN 1
@@ -1170,12 +2041,21 @@ def get_menu_items():
                 LOWER(name) ASC,
                 id ASC
             """,
-            params,
+            (1 if use_square_menu_only else 0,),
         ).fetchall()
     finally:
         conn.close()
 
-    return jsonify([dict(row) for row in rows])
+    items = []
+    for row in rows:
+        item = dict(row)
+        item.pop("square_catalog_id", None)
+        item.pop("square_variation_id", None)
+        if use_square_menu_only and not availability_live:
+            item["is_available"] = None
+        items.append(item)
+
+    return jsonify(items)
 
 
 @app.post("/api/menu")

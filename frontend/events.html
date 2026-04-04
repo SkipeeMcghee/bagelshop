@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Everything Bagelry — Events</title>
+    <link rel="icon" type="image/png" href="../assets/images/BagelryLogo.png" />
+    <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+    <main class="container page-stack events-page-shell">
+        <header class="site-header">
+            <div class="header-brand">
+                <a href="index.html" aria-label="Go to home page">
+                    <img src="../assets/images/BagelryLogo.png" alt="Everything Bagelry logo" class="site-logo" />
+                </a>
+                <div>
+                    <h1>Events Calendar</h1>
+                    <p>Browse the full monthly calendar and see what is happening around the shop.</p>
+                </div>
+            </div>
+            <div class="header-actions">
+                <a class="account-button account-link" href="auth.html" aria-label="Open sign in or account page">
+                    <img
+                        src="../assets/images/profilepicblank.png"
+                        alt="Account profile"
+                        class="account-avatar"
+                        id="header-profile-image"
+                    />
+                    <span class="account-button-copy">
+                        <span class="account-button-label" id="header-account-label">Sign In</span>
+                        <span class="account-button-status" id="header-account-status">Continue with Google or a local account</span>
+                    </span>
+                </a>
+            </div>
+        </header>
+
+        <nav class="top-nav" aria-label="Primary">
+            <div class="top-nav-links">
+                <a class="nav-link" href="index.html">Home</a>
+                <a class="nav-link" href="menu.html">Menu</a>
+                <a class="nav-link" href="about.html">About Us</a>
+                <a class="nav-link active" href="events.html">Events</a>
+                <a class="nav-link" href="contact.html">Contact Us</a>
+                <a class="nav-link admin-nav-link" href="manager.html" hidden><span class="nav-link-icon" aria-hidden="true">🛠</span><span>Manager</span></a>
+            </div>
+        </nav>
+
+        <section class="panel calendar-hero">
+            <div>
+                <p class="eyebrow">Shop schedule</p>
+                <h2>Full calendar view</h2>
+                <p class="hero-copy">Use the month arrows to move through upcoming dates. Events come directly from the SQLite database.</p>
+            </div>
+            <div class="calendar-controls" aria-label="Calendar month navigation">
+                <button type="button" class="ghost-button calendar-arrow" id="calendar-prev-month" aria-label="Previous month">←</button>
+                <div>
+                    <p class="calendar-month-label" id="calendar-month-label">Loading...</p>
+                    <p class="calendar-status" id="calendar-status">Loading events...</p>
+                </div>
+                <button type="button" class="ghost-button calendar-arrow" id="calendar-next-month" aria-label="Next month">→</button>
+            </div>
+        </section>
+
+        <section class="panel calendar-panel">
+            <div class="calendar-weekdays" aria-hidden="true">
+                <span>Sun</span>
+                <span>Mon</span>
+                <span>Tue</span>
+                <span>Wed</span>
+                <span>Thu</span>
+                <span>Fri</span>
+                <span>Sat</span>
+            </div>
+            <div class="calendar-grid" id="calendar-grid" aria-live="polite"></div>
+        </section>
+    </main>
+
+    <script src="app.js"></script>
+    <script src="events.js"></script>
+</body>
+</html>

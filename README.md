@@ -84,6 +84,13 @@ Set these before running backend:
 - `GOOGLE_CLIENT_ID`
 - `GOOGLE_CLIENT_SECRET`
 - `GOOGLE_REDIRECT_URI` (ex: `http://127.0.0.1:5000/auth/google/callback`)
+- `RECAPTCHA_SITE_KEY`
+- `RECAPTCHA_SECRET_KEY`
+- `EMAIL_VERIFICATION_REQUIRED` (`1`/`0`)
+- `EMAIL_VERIFICATION_TOKEN_TTL_HOURS` (default `24`)
+- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`
+- `SMTP_USE_TLS`, `SMTP_USE_SSL`
+- `SMTP_FROM_EMAIL`, `SMTP_FROM_NAME`
 
 Use `backend/.env.example` as reference.
 
@@ -114,6 +121,18 @@ $env:FLASK_SECRET_KEY = "CHANGE_ME_TO_A_LONG_RANDOM_SECRET"
 $env:GOOGLE_CLIENT_ID = "YOUR_GOOGLE_CLIENT_ID"
 $env:GOOGLE_CLIENT_SECRET = "YOUR_GOOGLE_CLIENT_SECRET"
 $env:GOOGLE_REDIRECT_URI = "http://127.0.0.1:5000/auth/google/callback"
+$env:RECAPTCHA_SITE_KEY = "YOUR_RECAPTCHA_SITE_KEY"
+$env:RECAPTCHA_SECRET_KEY = "YOUR_RECAPTCHA_SECRET_KEY"
+$env:EMAIL_VERIFICATION_REQUIRED = "1"
+$env:EMAIL_VERIFICATION_TOKEN_TTL_HOURS = "24"
+$env:SMTP_HOST = "smtp.example.com"
+$env:SMTP_PORT = "587"
+$env:SMTP_USERNAME = "YOUR_SMTP_USERNAME"
+$env:SMTP_PASSWORD = "YOUR_SMTP_PASSWORD"
+$env:SMTP_USE_TLS = "1"
+$env:SMTP_USE_SSL = "0"
+$env:SMTP_FROM_EMAIL = "no-reply@example.com"
+$env:SMTP_FROM_NAME = "Everything Bagelry"
 
 python app.py
 ```
@@ -142,6 +161,12 @@ $env:GOOGLE_CLIENT_ID = "YOUR_GOOGLE_CLIENT_ID"
 $env:GOOGLE_CLIENT_SECRET = "YOUR_GOOGLE_CLIENT_SECRET"
 $env:GOOGLE_REDIRECT_URI = "http://127.0.0.1:5000/auth/google/callback"
 ```
+
+### 4) reCAPTCHA and email verification
+
+- Local signup can require Google reCAPTCHA when `RECAPTCHA_SITE_KEY` and `RECAPTCHA_SECRET_KEY` are set.
+- Local email/password accounts must verify their email before sign-in when `EMAIL_VERIFICATION_REQUIRED=1`.
+- If SMTP is not configured, verification emails are printed to the backend console/log for local development.
 
 ## Testing Checkout Flow
 
@@ -183,9 +208,11 @@ Base API: `http://127.0.0.1:5000/api`
 
 - `GET /api/health`
 - `GET /api/me`
+- `GET /api/auth/config`
 - `POST /api/auth/register`
 - `POST /api/auth/login`
 - `POST /api/auth/logout`
+- `POST /api/auth/resend-verification`
 - `POST /api/me`
 - `POST /api/me/password`
 - `GET /api/my/orders`
@@ -203,6 +230,7 @@ Non-API routes:
 
 - `GET /auth/google/start`
 - `GET /auth/google/callback`
+- `GET /auth/verify-email`
 - `GET /login`
 - `GET /logout`
 - `POST /checkout` (creates Square checkout, redirects browser)

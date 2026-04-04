@@ -11,7 +11,9 @@
     <main class="container landing-page">
         <header class="site-header">
             <div class="header-brand">
-                <img src="../assets/images/BagelryLogo.png" alt="Everything Bagelry logo" class="site-logo" />
+                <a href="index.html" aria-label="Go to home page">
+                    <img src="../assets/images/BagelryLogo.png" alt="Everything Bagelry logo" class="site-logo" />
+                </a>
                 <div>
                     <h1>Everything Bagelry</h1>
                     <p>Fresh bagels, good coffee, and simple online ordering.</p>
@@ -30,6 +32,17 @@
                 </span>
             </a>
         </header>
+
+        <nav class="top-nav" aria-label="Primary">
+            <div class="top-nav-links">
+                <a class="nav-link active" href="index.html">Home</a>
+                <a class="nav-link" href="menu.html">Menu</a>
+                <a class="nav-link" href="about.html">About Us</a>
+                <a class="nav-link" href="events.html">Events</a>
+                <a class="nav-link" href="contact.html">Contact Us</a>
+                <a class="nav-link admin-nav-link" href="manager.html" hidden><span class="nav-link-icon" aria-hidden="true">🛠</span><span>Manager</span></a>
+            </div>
+        </nav>
 
         <section class="panel landing-hero">
             <div class="landing-copy">

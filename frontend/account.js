@@ -1,4 +1,4 @@
-const BACKEND_BASE = "http://127.0.0.1:5001";
+const BACKEND_BASE = "http://127.0.0.1:5000";
 const API_BASE = `${BACKEND_BASE}/api`;
 const DEFAULT_PROFILE_IMAGE = "../assets/images/profilepicblank.png";
 
@@ -9,21 +9,12 @@ const accountDetailsForm = document.getElementById("account-details-form");
 const deliveryAddressForm = document.getElementById("delivery-address-form");
 const passwordResetForm = document.getElementById("password-reset-form");
 const passwordPanel = document.getElementById("password-panel");
-const sameAsBillingCheckbox = document.getElementById("same-as-billing-checkbox");
 const signOutButton = document.getElementById("sign-out-button");
 const refreshOrdersButton = document.getElementById("refresh-orders");
 const ordersStatus = document.getElementById("orders-status");
 const ordersList = document.getElementById("orders-list");
+const adminNavLinks = document.querySelectorAll(".admin-nav-link");
 let currentUser = null;
-
-const BILLING_TO_SHIPPING_FIELDS = [
-    ["billing_address_line1", "shipping_address_line1"],
-    ["billing_address_line2", "shipping_address_line2"],
-    ["billing_city", "shipping_city"],
-    ["billing_state", "shipping_state"],
-    ["billing_postal_code", "shipping_postal_code"],
-    ["billing_country", "shipping_country"],
-];
 
 async function apiRequest(path, options = {}) {
     const response = await fetch(`${API_BASE}${path}`, {
@@ -76,41 +67,6 @@ function getAccountSummary(account) {
     };
 }
 
-function getInputValue(name) {
-    return String(deliveryAddressForm.elements[name]?.value || "").trim();
-}
-
-function isSameAsBillingAddress(account) {
-    if (!account) {
-        return false;
-    }
-
-    return BILLING_TO_SHIPPING_FIELDS.every(([billingName, shippingName]) => {
-        const billingKey = billingName.replace("billing_", "").replace("address_", "");
-        const shippingKey = shippingName.replace("shipping_", "").replace("address_", "");
-        const billingAddress = account.billing_address || {};
-        const shippingAddress = account.shipping_address || {};
-        return String(billingAddress[billingKey] || "") === String(shippingAddress[shippingKey] || "");
-    });
-}
-
-function syncShippingFromBilling() {
-    for (const [billingName, shippingName] of BILLING_TO_SHIPPING_FIELDS) {
-        deliveryAddressForm.elements[shippingName].value = deliveryAddressForm.elements[billingName].value;
-    }
-}
-
-function updateShippingFieldState() {
-    const disableShipping = Boolean(sameAsBillingCheckbox?.checked);
-    if (disableShipping) {
-        syncShippingFromBilling();
-    }
-
-    for (const [, shippingName] of BILLING_TO_SHIPPING_FIELDS) {
-        deliveryAddressForm.elements[shippingName].disabled = disableShipping;
-    }
-}
-
 function populateForms(account) {
     accountDetailsForm.elements.name.value = account?.name || "";
     accountDetailsForm.elements.email.value = account?.email || "";
@@ -122,15 +78,6 @@ function populateForms(account) {
     deliveryAddressForm.elements.shipping_state.value = account?.shipping_address?.state || "";
     deliveryAddressForm.elements.shipping_postal_code.value = account?.shipping_address?.postal_code || "";
     deliveryAddressForm.elements.shipping_country.value = account?.shipping_address?.country || "";
-    deliveryAddressForm.elements.billing_address_line1.value = account?.billing_address?.line1 || "";
-    deliveryAddressForm.elements.billing_address_line2.value = account?.billing_address?.line2 || "";
-    deliveryAddressForm.elements.billing_city.value = account?.billing_address?.city || "";
-    deliveryAddressForm.elements.billing_state.value = account?.billing_address?.state || "";
-    deliveryAddressForm.elements.billing_postal_code.value = account?.billing_address?.postal_code || "";
-    deliveryAddressForm.elements.billing_country.value = account?.billing_address?.country || "";
-
-    sameAsBillingCheckbox.checked = isSameAsBillingAddress(account);
-    updateShippingFieldState();
 }
 
 function renderSummary(account) {
@@ -139,6 +86,9 @@ function renderSummary(account) {
     accountDisplayName.textContent = summary.title;
     accountSummaryText.textContent = summary.text;
     accountProfileImage.src = summary.image;
+    for (const link of adminNavLinks) {
+        link.hidden = !account?.is_admin;
+    }
     passwordPanel.hidden = Boolean(account?.is_google_account);
     populateForms(account);
 }
@@ -242,10 +192,6 @@ deliveryAddressForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     clearFeedback();
 
-    if (sameAsBillingCheckbox.checked) {
-        syncShippingFromBilling();
-    }
-
     const formData = new FormData(deliveryAddressForm);
     try {
         const data = await apiRequest("/me", {
@@ -257,33 +203,15 @@ deliveryAddressForm.addEventListener("submit", async (event) => {
                 shipping_state: String(formData.get("shipping_state") || "").trim(),
                 shipping_postal_code: String(formData.get("shipping_postal_code") || "").trim(),
                 shipping_country: String(formData.get("shipping_country") || "").trim(),
-                billing_address_line1: String(formData.get("billing_address_line1") || "").trim(),
-                billing_address_line2: String(formData.get("billing_address_line2") || "").trim(),
-                billing_city: String(formData.get("billing_city") || "").trim(),
-                billing_state: String(formData.get("billing_state") || "").trim(),
-                billing_postal_code: String(formData.get("billing_postal_code") || "").trim(),
-                billing_country: String(formData.get("billing_country") || "").trim(),
             }),
         });
         currentUser = data.user;
         renderSummary(currentUser);
-        setFeedback("delivery-address-message", "Delivery addresses updated.");
+        setFeedback("delivery-address-message", "Shipping address updated.");
     } catch (error) {
         setFeedback("delivery-address-message", String(error.message || error), "error");
     }
 });
-
-sameAsBillingCheckbox.addEventListener("change", () => {
-    updateShippingFieldState();
-});
-
-for (const [billingName] of BILLING_TO_SHIPPING_FIELDS) {
-    deliveryAddressForm.elements[billingName].addEventListener("input", () => {
-        if (sameAsBillingCheckbox.checked) {
-            syncShippingFromBilling();
-        }
-    });
-}
 
 passwordResetForm.addEventListener("submit", async (event) => {
     event.preventDefault();

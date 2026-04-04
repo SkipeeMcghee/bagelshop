@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Everything Bagelry — Manager Portal</title>
+    <link rel="icon" type="image/png" href="../assets/images/BagelryLogo.png" />
+    <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+    <main class="container page-stack manager-page-shell">
+        <header class="site-header">
+            <div class="header-brand">
+                <a href="index.html" aria-label="Go to home page">
+                    <img src="../assets/images/BagelryLogo.png" alt="Everything Bagelry logo" class="site-logo" />
+                </a>
+                <div>
+                    <h1>Manager Portal</h1>
+                    <p>Admin-only database tools for events, users, orders, menu data, and direct SQLite management.</p>
+                </div>
+            </div>
+            <div class="header-actions">
+                <a class="account-button account-link" href="auth.html" aria-label="Open sign in or account page">
+                    <img
+                        src="../assets/images/profilepicblank.png"
+                        alt="Account profile"
+                        class="account-avatar"
+                        id="header-profile-image"
+                    />
+                    <span class="account-button-copy">
+                        <span class="account-button-label" id="header-account-label">Sign In</span>
+                        <span class="account-button-status" id="header-account-status">Continue with Google or a local account</span>
+                    </span>
+                </a>
+            </div>
+        </header>
+
+        <nav class="top-nav" aria-label="Primary">
+            <div class="top-nav-links">
+                <a class="nav-link" href="index.html">Home</a>
+                <a class="nav-link" href="menu.html">Menu</a>
+                <a class="nav-link" href="about.html">About Us</a>
+                <a class="nav-link" href="events.html">Events</a>
+                <a class="nav-link" href="contact.html">Contact Us</a>
+                <a class="nav-link admin-nav-link active" href="manager.html"><span class="nav-link-icon" aria-hidden="true">🛠</span><span>Manager</span></a>
+            </div>
+        </nav>
+
+        <section class="panel manager-hero">
+            <div>
+                <p class="eyebrow">Admin tools</p>
+                <h2>Browse, edit, and query the live SQLite database</h2>
+                <p class="hero-copy">
+                    This portal is intended for managers only. It includes direct table browsing, row editing, event management through the database, and an SQL console for advanced admin work.
+                </p>
+            </div>
+            <div class="manager-status-card">
+                <p class="hero-highlight-label">Access</p>
+                <strong id="manager-access-label">Checking permissions...</strong>
+                <p id="manager-access-copy">This page is protected and only available to admin users.</p>
+            </div>
+        </section>
+
+        <section class="manager-layout">
+            <aside class="panel manager-sidebar">
+                <div class="section-heading">
+                    <div>
+                        <p class="eyebrow">Tables</p>
+                        <h3>Database browser</h3>
+                    </div>
+                </div>
+                <p class="section-subtitle" id="manager-table-status">Loading tables...</p>
+                <div class="manager-table-list" id="manager-table-list"></div>
+            </aside>
+
+            <section class="manager-main-stack">
+                <section class="panel">
+                    <div class="section-heading manager-panel-header">
+                        <div>
+                            <p class="eyebrow">Current table</p>
+                            <h3 id="manager-current-table">No table selected</h3>
+                        </div>
+                        <div class="manager-panel-actions">
+                            <button type="button" class="secondary-button" id="manager-refresh-table">Refresh</button>
+                            <button type="button" class="ghost-button" id="manager-new-row">New Row</button>
+                        </div>
+                    </div>
+                    <p class="section-subtitle" id="manager-current-table-meta">Select a table to inspect rows and edit records.</p>
+                    <div class="manager-table-wrapper" id="manager-table-wrapper"></div>
+                </section>
+
+                <section class="manager-editor-grid">
+                    <section class="panel">
+                        <div class="section-heading manager-panel-header">
+                            <div>
+                                <p class="eyebrow">Row editor</p>
+                                <h3 id="manager-editor-title">JSON row editor</h3>
+                            </div>
+                            <div class="manager-panel-actions">
+                                <button type="button" id="manager-save-row">Save Row</button>
+                                <button type="button" class="ghost-button" id="manager-delete-row">Delete Row</button>
+                            </div>
+                        </div>
+                        <p class="form-note">Edit row values as JSON. Use the New Row button for inserts.</p>
+                        <textarea id="manager-row-editor" rows="16" spellcheck="false"></textarea>
+                        <p class="feedback-message" id="manager-row-message"></p>
+                    </section>
+
+                    <section class="panel">
+                        <div class="section-heading manager-panel-header">
+                            <div>
+                                <p class="eyebrow">SQL console</p>
+                                <h3>Direct SQLite query runner</h3>
+                            </div>
+                            <div class="manager-panel-actions">
+                                <button type="button" id="manager-run-query">Run Query</button>
+                            </div>
+                        </div>
+                        <label class="manager-label" for="manager-sql-editor">SQL</label>
+                        <textarea id="manager-sql-editor" rows="10" spellcheck="false">SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name;</textarea>
+                        <label class="manager-label" for="manager-sql-params">Params (JSON array)</label>
+                        <textarea id="manager-sql-params" rows="4" spellcheck="false">[]</textarea>
+                        <p class="feedback-message" id="manager-query-message"></p>
+                        <pre class="manager-query-results" id="manager-query-results">Run a query to inspect results here.</pre>
+                    </section>
+                </section>
+            </section>
+        </section>
+    </main>
+
+    <script src="app.js"></script>
+    <script src="manager.js"></script>
+</body>
+</html>

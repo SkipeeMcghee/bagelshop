@@ -24,6 +24,17 @@
             </div>
         </header>
 
+        <nav class="top-nav" aria-label="Primary">
+            <div class="top-nav-links">
+                <a class="nav-link" href="index.html">Home</a>
+                <a class="nav-link" href="menu.html">Menu</a>
+                <a class="nav-link" href="about.html">About Us</a>
+                <a class="nav-link" href="events.html">Events</a>
+                <a class="nav-link" href="contact.html">Contact Us</a>
+                <a class="nav-link admin-nav-link" href="manager.html" hidden><span class="nav-link-icon" aria-hidden="true">🛠</span><span>Manager</span></a>
+            </div>
+        </nav>
+
         <section class="panel account-summary">
             <img
                 src="../assets/images/profilepicblank.png"
@@ -69,40 +80,17 @@
 
         <section class="panel">
             <p class="eyebrow">Delivery details</p>
-            <h3>Shipping and billing addresses</h3>
+            <h3>Shipping address</h3>
             <form id="delivery-address-form">
-                <div class="address-sections">
-                    <section class="address-section">
-                        <h4>Billing address</h4>
-                        <div class="address-grid">
-                            <input name="billing_address_line1" placeholder="Address line 1" />
-                            <input name="billing_address_line2" placeholder="Address line 2" />
-                            <input name="billing_city" placeholder="City" />
-                            <input name="billing_state" placeholder="State or province" />
-                            <input name="billing_postal_code" placeholder="Postal code" />
-                            <input name="billing_country" placeholder="Country" />
-                        </div>
-                    </section>
-
-                    <section class="address-section">
-                        <div class="address-section-header">
-                            <h4>Shipping address</h4>
-                            <label class="checkbox-row" for="same-as-billing-checkbox">
-                                <input id="same-as-billing-checkbox" name="same_as_billing" type="checkbox" />
-                                <span>Same as billing</span>
-                            </label>
-                        </div>
-                        <div class="address-grid">
-                            <input name="shipping_address_line1" placeholder="Address line 1" />
-                            <input name="shipping_address_line2" placeholder="Address line 2" />
-                            <input name="shipping_city" placeholder="City" />
-                            <input name="shipping_state" placeholder="State or province" />
-                            <input name="shipping_postal_code" placeholder="Postal code" />
-                            <input name="shipping_country" placeholder="Country" />
-                        </div>
-                    </section>
+                <div class="address-grid">
+                    <input name="shipping_address_line1" placeholder="Address line 1" />
+                    <input name="shipping_address_line2" placeholder="Address line 2" />
+                    <input name="shipping_city" placeholder="City" />
+                    <input name="shipping_state" placeholder="State or province" />
+                    <input name="shipping_postal_code" placeholder="Postal code" />
+                    <input name="shipping_country" placeholder="Country" />
                 </div>
-                <button type="submit">Save Addresses</button>
+                <button type="submit">Save Shipping Address</button>
             </form>
             <p class="feedback-message" id="delivery-address-message"></p>
         </section>
