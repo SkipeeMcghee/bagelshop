@@ -2821,8 +2821,14 @@ def start_google_auth():
     if not is_safe_absolute_http_url(GOOGLE_REDIRECT_URI):
         return frontend_redirect("auth.html", error="google_redirect_uri_invalid")
 
+    retry_requested = str(request.args.get("retry", "") or "").strip() == "1"
+    if not retry_requested:
+        session.pop("google_oauth_retry_attempted", None)
+
     state = token_urlsafe(24)
     session["google_oauth_state"] = state
+    if retry_requested:
+        session["google_oauth_retry_attempted"] = True
     google_params = {
         "client_id": GOOGLE_CLIENT_ID,
         "redirect_uri": GOOGLE_REDIRECT_URI,
@@ -2838,10 +2844,15 @@ def start_google_auth():
 @app.get("/auth/google/callback")
 def finish_google_auth():
     if request.args.get("error"):
+        session.pop("google_oauth_retry_attempted", None)
         return frontend_redirect("auth.html", error=request.args.get("error", "google_auth_failed"))
 
     state = request.args.get("state", "")
     if not state or state != session.get("google_oauth_state"):
+        if not bool(session.get("google_oauth_retry_attempted")):
+            session.pop("google_oauth_state", None)
+            return redirect("/auth/google/start?retry=1")
+        session.pop("google_oauth_retry_attempted", None)
         clear_logged_in_user()
         return frontend_redirect("auth.html", error="invalid_google_state")
 
@@ -2952,6 +2963,7 @@ def finish_google_auth():
 
     set_logged_in_user(user_id, authenticated_user, picture=picture)
     session.pop("google_oauth_state", None)
+    session.pop("google_oauth_retry_attempted", None)
     return frontend_redirect("account.html")
 
 
