@@ -1,3 +1,4 @@
+(() => {
 const LOCAL_BACKEND_BASE = "http://127.0.0.1:5000";
 const EVENTS_BACKEND_BASE =
     window.location.protocol === "file:" || ["127.0.0.1:5501", "localhost:5501"].includes(window.location.host)
@@ -307,3 +308,4 @@ document.addEventListener("keydown", (event) => {
 });
 
 loadMonth();
+})();
