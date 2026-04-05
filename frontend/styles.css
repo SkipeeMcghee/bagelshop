@@ -2022,6 +2022,8 @@ button:hover {
     border-top: 1px solid rgba(32, 52, 67, 0.10);
     background: rgba(255, 255, 255, 0.72);
     flex-shrink: 0;
+    position: relative;
+    z-index: 1;
 }
 
 .site-footer-inner {
