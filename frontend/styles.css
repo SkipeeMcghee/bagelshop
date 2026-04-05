@@ -407,40 +407,49 @@ body.modal-open {
 
 .home-story-section {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(260px, 0.95fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-areas:
+        "copy topRight"
+        "bottomLeft bottomRight";
     gap: 22px;
-    align-items: center;
+    align-items: stretch;
 }
 
-.home-story-copy h2 {
-    margin-top: 0;
-    margin-bottom: 14px;
-    font-size: clamp(1.9rem, 3vw, 2.8rem);
+.home-story-copy {
+    grid-area: copy;
 }
 
-.home-mini-gallery {
-    display: grid;
-    gap: 14px;
-}
-
-.home-mini-gallery-card {
+.home-story-card {
     margin: 0;
-    min-height: 190px;
+    min-height: 240px;
     overflow: hidden;
-    border-radius: 22px;
+    border-radius: 24px;
     box-shadow: 0 16px 30px rgba(31, 25, 21, 0.12);
 }
 
-.home-mini-gallery-image {
+.home-story-card-top-right {
+    grid-area: topRight;
+}
+
+.home-story-card-bottom-left {
+    grid-area: bottomLeft;
+}
+
+.home-story-card-bottom-right {
+    grid-area: bottomRight;
+}
+
+.home-story-image {
     display: block;
     width: 100%;
     height: 100%;
     object-fit: cover;
 }
 
-.home-mini-gallery-image-contain {
-    object-fit: contain;
-    background: rgba(255, 255, 255, 0.94);
+.home-story-copy h2 {
+    margin-top: 0;
+    margin-bottom: 14px;
+    font-size: clamp(1.9rem, 3vw, 2.8rem);
 }
 
 .home-image-row {
@@ -2455,7 +2464,7 @@ button:hover {
         grid-column: span 1;
     }
 
-    .home-mini-gallery-card,
+    .home-story-card,
     .about-banner-frame {
         min-height: 220px;
     }
