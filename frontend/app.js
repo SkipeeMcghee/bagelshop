@@ -1,4 +1,8 @@
-const BACKEND_BASE = "http://127.0.0.1:5000";
+const LOCAL_BACKEND_BASE = "http://127.0.0.1:5000";
+const BACKEND_BASE =
+    window.location.protocol === "file:" || ["127.0.0.1:5501", "localhost:5501"].includes(window.location.host)
+        ? LOCAL_BACKEND_BASE
+        : window.location.origin;
 const API_BASE = `${BACKEND_BASE}/api`;
 const DEFAULT_PROFILE_IMAGE = "/assets/images/profilepicblank.png";
 

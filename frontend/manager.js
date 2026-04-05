@@ -1,6 +1,11 @@
 (() => {
 
-const MANAGER_API_ROOT = "http://127.0.0.1:5000/api";
+const LOCAL_BACKEND_BASE = "http://127.0.0.1:5000";
+const MANAGER_BACKEND_BASE =
+    window.location.protocol === "file:" || ["127.0.0.1:5501", "localhost:5501"].includes(window.location.host)
+        ? LOCAL_BACKEND_BASE
+        : window.location.origin;
+const MANAGER_API_ROOT = `${MANAGER_BACKEND_BASE}/api`;
 
 const accessLabel = document.getElementById("manager-access-label");
 const accessCopy = document.getElementById("manager-access-copy");

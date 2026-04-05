@@ -1,4 +1,9 @@
-const EVENTS_API_ROOT = "http://127.0.0.1:5000/api";
+const LOCAL_BACKEND_BASE = "http://127.0.0.1:5000";
+const EVENTS_BACKEND_BASE =
+    window.location.protocol === "file:" || ["127.0.0.1:5501", "localhost:5501"].includes(window.location.host)
+        ? LOCAL_BACKEND_BASE
+        : window.location.origin;
+const EVENTS_API_ROOT = `${EVENTS_BACKEND_BASE}/api`;
 const calendarGrid = document.getElementById("calendar-grid");
 const calendarMonthLabel = document.getElementById("calendar-month-label");
 const calendarStatus = document.getElementById("calendar-status");
