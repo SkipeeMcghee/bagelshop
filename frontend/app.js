@@ -554,9 +554,17 @@ function getCartTotalCents() {
     return getCartEntries().reduce((sum, entry) => sum + entry.lineTotalCents, 0);
 }
 
+function isPortraitMenuCategory(category) {
+    const normalized = String(category || "").trim().toLowerCase();
+    return normalized === "bagels" || normalized.endsWith(" bagels") || normalized.includes("bagel");
+}
+
 function createMenuCard(item) {
     const article = document.createElement("article");
     article.className = "menu-card";
+    if (isPortraitMenuCategory(item.category)) {
+        article.classList.add("menu-card-portrait");
+    }
 
     const imagePlaceholder = document.createElement("div");
     imagePlaceholder.className = "menu-card-image";
