@@ -55,9 +55,6 @@
                     <input name="password" type="password" placeholder="Password" required />
                     <button type="submit">Sign In</button>
                 </form>
-                <button type="button" class="ghost-button auth-inline-button" id="resend-verification-button" hidden>
-                    Resend verification email
-                </button>
                 <div class="auth-divider"><span>or</span></div>
                 <button type="button" id="continue-with-google" class="continue-with-google-button">
                     <span class="google-mark" aria-hidden="true">G</span>
@@ -79,6 +76,9 @@
                     <div id="recaptcha-slot" class="recaptcha-slot" hidden></div>
                     <button type="submit">Create Account</button>
                 </form>
+                <button type="button" class="ghost-button auth-inline-button" id="resend-verification-button" hidden>
+                    Resend verification email
+                </button>
                 <p class="section-subtitle" id="verification-status-message"></p>
                 <p class="feedback-message" id="create-account-message"></p>
             </section>

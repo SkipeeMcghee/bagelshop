@@ -267,7 +267,7 @@ resendVerificationButton.addEventListener("click", async () => {
     clearFeedback();
     setVerificationStatus("");
     if (!pendingVerificationEmail) {
-        setFeedback("sign-in-message", "Enter your email and try signing in first if you need a new verification email.", "error");
+        setFeedback("create-account-message", "Create an account first, or try signing in so we know which email to resend to.", "error");
         return;
     }
 
@@ -279,9 +279,9 @@ resendVerificationButton.addEventListener("click", async () => {
         const consoleNote = data.delivery === "console"
             ? " Check the backend log for the verification link."
             : "";
-        setFeedback("sign-in-message", `${data.message || "Verification email sent."}${consoleNote}`, "success");
+        setFeedback("create-account-message", `${data.message || "Verification email sent."}${consoleNote}`, "success");
     } catch (error) {
-        setFeedback("sign-in-message", String(error.message || error), "error");
+        setFeedback("create-account-message", String(error.message || error), "error");
     }
 });
 
