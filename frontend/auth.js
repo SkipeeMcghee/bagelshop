@@ -11,6 +11,7 @@ const continueWithGoogleButton = document.getElementById("continue-with-google")
 const resendVerificationButton = document.getElementById("resend-verification-button");
 const verificationStatusMessage = document.getElementById("verification-status-message");
 const recaptchaSlot = document.getElementById("recaptcha-slot");
+const termsAcceptedCheckbox = document.getElementById("terms-accepted");
 
 let authConfig = {
     recaptcha_enabled: false,
@@ -225,6 +226,11 @@ createAccountForm.addEventListener("submit", async (event) => {
         return;
     }
 
+    if (!termsAcceptedCheckbox?.checked) {
+        setFeedback("create-account-message", "You must accept the terms and conditions to create an account.", "error");
+        return;
+    }
+
     try {
         const recaptchaToken = await getRecaptchaToken();
         if (authConfig.recaptcha_enabled && !recaptchaToken) {
@@ -238,6 +244,7 @@ createAccountForm.addEventListener("submit", async (event) => {
                 name: String(formData.get("name") || "").trim(),
                 email,
                 password,
+                terms_accepted: Boolean(formData.get("terms_accepted")),
                 recaptcha_token: recaptchaToken,
             }),
         });

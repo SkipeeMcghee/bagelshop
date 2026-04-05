@@ -2600,6 +2600,7 @@ def register_local_user():
     email = str(data.get("email", "")).strip().lower()
     password = str(data.get("password", ""))
     recaptcha_token = str(data.get("recaptcha_token", "")).strip()
+    terms_accepted = bool(data.get("terms_accepted"))
 
     if not name:
         return jsonify({"error": "name is required"}), 400
@@ -2607,6 +2608,8 @@ def register_local_user():
         return jsonify({"error": "email is required"}), 400
     if len(password) < 6:
         return jsonify({"error": "password must be at least 6 characters"}), 400
+    if not terms_accepted:
+        return jsonify({"error": "You must accept the terms and conditions to create an account"}), 400
     if not verify_recaptcha_token(
         recaptcha_token,
         request.remote_addr or "",
