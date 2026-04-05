@@ -1702,6 +1702,32 @@ def send_order_confirmation_emails(
     }
 
 
+def build_contact_form_message(
+    *,
+    user: sqlite3.Row,
+    sender_name: str,
+    sender_email: str,
+    subject: str,
+    message: str,
+) -> tuple[str, str]:
+    delivery_subject = f"Contact form: {subject}"
+    body = (
+        "A new contact form submission was received.\n\n"
+        f"Name: {sender_name or 'Unknown'}\n"
+        f"Email: {sender_email or 'Not provided'}\n"
+        f"Phone: {str(user['phone'] or '').strip() or 'Not provided'}\n"
+        f"User ID: {int(user['id'])}\n"
+        f"Customer ID: {int(user['customer_id'])}\n"
+        f"Auth provider: {str(user['auth_provider'] or '').strip() or 'unknown'}\n"
+        f"Google account: {'Yes' if bool(user['is_google_account']) else 'No'}\n"
+        f"Email verified: {'Yes' if bool(user['email_verified']) else 'No'}\n\n"
+        f"Original subject: {subject}\n\n"
+        "Message:\n"
+        f"{message}\n"
+    )
+    return delivery_subject, body
+
+
 def issue_email_verification(conn: sqlite3.Connection, user: sqlite3.Row) -> dict[str, str]:
     if not user["email"]:
         raise ValueError("Email is required for verification")
@@ -3667,6 +3693,22 @@ def submit_contact_form():
 
         sender_name = str(data.get("name", "") or user["name"] or user["email"] or "Account holder").strip()
         sender_email = str(user["email"] or data.get("email", "") or "").strip()
+        recipient_email = ORDER_CONFIRMATION_COMPANY_EMAIL or SMTP_FROM_EMAIL
+        delivery_subject, delivery_body = build_contact_form_message(
+            user=user,
+            sender_name=sender_name,
+            sender_email=sender_email,
+            subject=subject,
+            message=message,
+        )
+
+        delivery = "console"
+        if recipient_email:
+            delivery = send_email_message(
+                to_email=recipient_email,
+                subject=delivery_subject,
+                body=delivery_body,
+            )
 
         print(
             "[contact form] "
@@ -3680,9 +3722,10 @@ def submit_contact_form():
 
     return jsonify(
         {
-            "message": "Thanks for reaching out. Your message was accepted and logged for now.",
+            "message": "Thanks for reaching out. Your message was sent to the shop inbox.",
             "sender_name": sender_name,
             "sender_email": sender_email,
+            "delivery": delivery,
         }
     ), 200
 
