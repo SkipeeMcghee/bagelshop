@@ -257,7 +257,12 @@ passwordResetForm.addEventListener("submit", async (event) => {
 });
 
 signOutButton.addEventListener("click", async () => {
-    window.location.href = `${BACKEND_BASE}/logout`;
+    try {
+        await apiRequest("/auth/logout", { method: "POST" });
+    } catch (error) {
+        console.warn("Sign out request failed", error);
+    }
+    window.location.href = "index.html";
 });
 
 refreshOrdersButton.addEventListener("click", loadPastOrders);
