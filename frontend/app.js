@@ -1,6 +1,6 @@
 const BACKEND_BASE = "http://127.0.0.1:5000";
 const API_BASE = `${BACKEND_BASE}/api`;
-const DEFAULT_PROFILE_IMAGE = "../assets/images/profilepicblank.png";
+const DEFAULT_PROFILE_IMAGE = "/assets/images/profilepicblank.png";
 
 const menuList = document.getElementById("menu-list");
 const menuTabs = document.getElementById("menu-tabs");

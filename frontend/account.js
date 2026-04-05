@@ -1,6 +1,6 @@
 const BACKEND_BASE = "http://127.0.0.1:5000";
 const API_BASE = `${BACKEND_BASE}/api`;
-const DEFAULT_PROFILE_IMAGE = "../assets/images/profilepicblank.png";
+const DEFAULT_PROFILE_IMAGE = "/assets/images/profilepicblank.png";
 
 const accountProfileImage = document.getElementById("account-profile-image");
 const accountDisplayName = document.getElementById("account-display-name");
