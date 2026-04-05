@@ -1776,7 +1776,7 @@ button:hover {
 
 .menu-card {
     display: grid;
-    grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
+    grid-template-columns: minmax(170px, 210px) minmax(0, 1fr);
     gap: 18px;
     align-items: stretch;
     min-height: 240px;
@@ -1800,7 +1800,8 @@ button:hover {
     align-content: end;
     justify-items: stretch;
     gap: 8px;
-    min-height: 200px;
+    min-height: 260px;
+    aspect-ratio: 3 / 4;
     padding: 18px;
     border-radius: 8px;
     background:
@@ -1955,7 +1956,7 @@ button:hover {
     }
 
     .menu-card-image {
-        min-height: 180px;
+        min-height: 240px;
     }
 }
 
