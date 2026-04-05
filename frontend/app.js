@@ -556,7 +556,7 @@ function getCartTotalCents() {
 
 function isPortraitMenuCategory(category) {
     const normalized = String(category || "").trim().toLowerCase();
-    return normalized === "bagels";
+    return normalized === "bags";
 }
 
 function createMenuCard(item) {
