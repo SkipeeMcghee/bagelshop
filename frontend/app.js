@@ -562,7 +562,8 @@ function isPortraitMenuCategory(category) {
 function createMenuCard(item) {
     const article = document.createElement("article");
     article.className = "menu-card";
-    if (isPortraitMenuCategory(item.category)) {
+    const itemCategory = String(item.category || selectedMenuCategory || "").trim();
+    if (isPortraitMenuCategory(itemCategory)) {
         article.classList.add("menu-card-portrait");
     }
 
