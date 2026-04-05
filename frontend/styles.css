@@ -25,6 +25,9 @@ body {
     font-family: "Trebuchet MS", "Segoe UI", sans-serif;
     color: var(--ink);
     background: var(--bg-accent);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
 }
 
 body.modal-open {
@@ -34,6 +37,8 @@ body.modal-open {
 .container {
     max-width: 1120px;
     margin: 0 auto;
+    width: 100%;
+    flex: 1 0 auto;
     padding: 28px 18px 56px;
 }
 
@@ -2016,6 +2021,7 @@ button:hover {
     margin-top: 12px;
     border-top: 1px solid rgba(32, 52, 67, 0.10);
     background: rgba(255, 255, 255, 0.72);
+    flex-shrink: 0;
 }
 
 .site-footer-inner {
@@ -2051,6 +2057,28 @@ button:hover {
 
 .site-footer a:hover {
     text-decoration: underline;
+}
+
+.site-footer-social-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+}
+
+.site-footer-social-link:hover {
+    text-decoration: none;
+    transform: translateY(-1px);
+}
+
+.site-footer-social-icon {
+    display: block;
+    max-width: 22px;
+    max-height: 22px;
+    width: auto;
+    height: auto;
+    object-fit: contain;
 }
 
 .legal-page-shell {
