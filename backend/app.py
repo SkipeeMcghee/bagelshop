@@ -68,6 +68,8 @@ SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "1").strip().lower() in {"1", "true", "
 SMTP_USE_SSL = os.getenv("SMTP_USE_SSL", "0").strip().lower() in {"1", "true", "yes", "on"}
 SMTP_FROM_EMAIL = os.getenv("SMTP_FROM_EMAIL", "")
 SMTP_FROM_NAME = os.getenv("SMTP_FROM_NAME", "Everything Bagelry")
+BREVO_API_KEY = os.getenv("BREVO_API_KEY", "").strip()
+BREVO_API_URL = os.getenv("BREVO_API_URL", "https://api.brevo.com/v3/smtp/email").strip()
 ORDER_CONFIRMATION_COMPANY_EMAIL = os.getenv(
     "ORDER_CONFIRMATION_COMPANY_EMAIL", "brianheise22@gmail.com"
 ).strip()
@@ -1361,7 +1363,57 @@ def build_email_verification_message(name: str, verification_link: str) -> tuple
     return subject, body
 
 
+def send_email_message_via_brevo_api(
+    *, to_email: str, subject: str, body: str, reply_to: str = ""
+) -> str:
+    if not BREVO_API_KEY:
+        raise RuntimeError("Brevo API key is not configured")
+    if not SMTP_FROM_EMAIL:
+        raise RuntimeError("SMTP_FROM_EMAIL must be configured for Brevo delivery")
+
+    payload: dict[str, Any] = {
+        "sender": {"email": SMTP_FROM_EMAIL, "name": SMTP_FROM_NAME or SMTP_FROM_EMAIL},
+        "to": [{"email": to_email}],
+        "subject": subject,
+        "textContent": body,
+    }
+    reply_to_value = str(reply_to or "").strip()
+    if reply_to_value:
+        payload["replyTo"] = {"email": reply_to_value}
+
+    try:
+        response = requests.post(
+            BREVO_API_URL,
+            headers={
+                "accept": "application/json",
+                "api-key": BREVO_API_KEY,
+                "content-type": "application/json",
+            },
+            json=payload,
+            timeout=12,
+        )
+    except requests.RequestException as exc:
+        raise RuntimeError(f"Brevo API request failed: {exc}") from exc
+
+    if response.ok:
+        return "brevo-api"
+
+    try:
+        details = response.json()
+    except ValueError:
+        details = response.text.strip()
+    raise RuntimeError(f"Brevo API error ({response.status_code}): {details}")
+
+
 def send_email_message(*, to_email: str, subject: str, body: str, reply_to: str = "") -> str:
+    if BREVO_API_KEY:
+        return send_email_message_via_brevo_api(
+            to_email=to_email,
+            subject=subject,
+            body=body,
+            reply_to=reply_to,
+        )
+
     if SMTP_HOST and SMTP_FROM_EMAIL:
         message = EmailMessage()
         message["Subject"] = subject
