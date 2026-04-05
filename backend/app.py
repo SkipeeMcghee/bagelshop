@@ -56,6 +56,7 @@ GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
 RECAPTCHA_SITE_KEY = os.getenv("RECAPTCHA_SITE_KEY", "")
 RECAPTCHA_SECRET_KEY = os.getenv("RECAPTCHA_SECRET_KEY", "")
+RECAPTCHA_MIN_SCORE = float(os.getenv("RECAPTCHA_MIN_SCORE", "0.5") or "0.5")
 EMAIL_VERIFICATION_REQUIRED = os.getenv("EMAIL_VERIFICATION_REQUIRED", "1").strip().lower() in {"1", "true", "yes", "on"}
 EMAIL_VERIFICATION_TOKEN_TTL_HOURS = max(
     1, int(os.getenv("EMAIL_VERIFICATION_TOKEN_TTL_HOURS", "24") or "24")
@@ -1806,7 +1807,13 @@ def issue_email_verification(conn: sqlite3.Connection, user: sqlite3.Row) -> dic
     return {"verification_link": verification_link, "delivery": delivery}
 
 
-def verify_recaptcha_token(token: str, remote_ip: str = "") -> bool:
+def verify_recaptcha_token(
+    token: str,
+    remote_ip: str = "",
+    *,
+    expected_action: str = "register",
+    minimum_score: float | None = None,
+) -> bool:
     if not is_recaptcha_enabled():
         return True
     if not token:
@@ -1827,7 +1834,24 @@ def verify_recaptcha_token(token: str, remote_ip: str = "") -> bool:
     except (requests.RequestException, ValueError):
         return False
 
-    return bool(payload.get("success"))
+    if not bool(payload.get("success")):
+        return False
+
+    if expected_action:
+        returned_action = str(payload.get("action", "") or "").strip()
+        if returned_action and returned_action != expected_action:
+            return False
+
+    score_floor = RECAPTCHA_MIN_SCORE if minimum_score is None else float(minimum_score)
+    score = payload.get("score")
+    if score is not None:
+        try:
+            if float(score) < score_floor:
+                return False
+        except (TypeError, ValueError):
+            return False
+
+    return True
 
 
 def get_public_user_dict(
@@ -2116,6 +2140,7 @@ def get_auth_config():
         {
             "recaptcha_enabled": is_recaptcha_enabled(),
             "recaptcha_site_key": RECAPTCHA_SITE_KEY if is_recaptcha_enabled() else "",
+            "recaptcha_mode": "v3" if is_recaptcha_enabled() else "disabled",
             "email_verification_required": is_email_verification_enabled(),
         }
     ), 200
@@ -2582,7 +2607,11 @@ def register_local_user():
         return jsonify({"error": "email is required"}), 400
     if len(password) < 6:
         return jsonify({"error": "password must be at least 6 characters"}), 400
-    if not verify_recaptcha_token(recaptcha_token, request.remote_addr or ""):
+    if not verify_recaptcha_token(
+        recaptcha_token,
+        request.remote_addr or "",
+        expected_action="register",
+    ):
         return jsonify({"error": "reCAPTCHA verification failed"}), 400
 
     conn = get_db()

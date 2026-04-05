@@ -15,10 +15,11 @@ const recaptchaSlot = document.getElementById("recaptcha-slot");
 let authConfig = {
     recaptcha_enabled: false,
     recaptcha_site_key: "",
+    recaptcha_mode: "disabled",
     email_verification_required: true,
 };
-let recaptchaWidgetId = null;
 let pendingVerificationEmail = "";
+let recaptchaScriptLoadingPromise = null;
 
 function clearFeedback() {
     for (const element of document.querySelectorAll(".feedback-message")) {
@@ -84,49 +85,47 @@ function updateResendButtonVisibility() {
     resendVerificationButton.hidden = !pendingVerificationEmail;
 }
 
-function resetRecaptchaWidget() {
-    if (window.grecaptcha && recaptchaWidgetId !== null) {
-        window.grecaptcha.reset(recaptchaWidgetId);
-    }
-}
-
-function getRecaptchaToken() {
+async function getRecaptchaToken() {
     if (!authConfig.recaptcha_enabled) {
         return "";
     }
-    if (!window.grecaptcha || recaptchaWidgetId === null) {
+    if (authConfig.recaptcha_mode !== "v3") {
         return "";
     }
-    return window.grecaptcha.getResponse(recaptchaWidgetId);
+    await loadRecaptcha(authConfig.recaptcha_site_key);
+    if (!window.grecaptcha) {
+        return "";
+    }
+    return window.grecaptcha.execute(authConfig.recaptcha_site_key, { action: "register" });
 }
 
 function loadRecaptcha(siteKey) {
     if (!recaptchaSlot || !siteKey) {
-        return;
+        return Promise.resolve();
     }
 
     recaptchaSlot.hidden = false;
-    const renderWidget = () => {
-        if (!window.grecaptcha || recaptchaWidgetId !== null) {
-            return;
-        }
-        recaptchaWidgetId = window.grecaptcha.render(recaptchaSlot, {
-            sitekey: siteKey,
-            theme: "light",
-        });
-    };
+    recaptchaSlot.textContent = "Protected by reCAPTCHA v3.";
 
     if (window.grecaptcha) {
-        renderWidget();
-        return;
+        return Promise.resolve();
     }
 
-    const script = document.createElement("script");
-    script.src = "https://www.google.com/recaptcha/api.js?render=explicit";
-    script.async = true;
-    script.defer = true;
-    script.onload = renderWidget;
-    document.head.appendChild(script);
+    if (recaptchaScriptLoadingPromise) {
+        return recaptchaScriptLoadingPromise;
+    }
+
+    recaptchaScriptLoadingPromise = new Promise((resolve, reject) => {
+        const script = document.createElement("script");
+        script.src = `https://www.google.com/recaptcha/api.js?render=${encodeURIComponent(siteKey)}`;
+        script.async = true;
+        script.defer = true;
+        script.onload = () => resolve();
+        script.onerror = () => reject(new Error("Could not load reCAPTCHA."));
+        document.head.appendChild(script);
+    });
+
+    return recaptchaScriptLoadingPromise;
 }
 
 async function checkExistingSession() {
@@ -144,12 +143,13 @@ async function loadAuthConfig() {
     try {
         authConfig = await apiRequest("/auth/config", { method: "GET" });
         if (authConfig.recaptcha_enabled && authConfig.recaptcha_site_key) {
-            loadRecaptcha(authConfig.recaptcha_site_key);
+            await loadRecaptcha(authConfig.recaptcha_site_key);
         }
     } catch (error) {
         authConfig = {
             recaptcha_enabled: false,
             recaptcha_site_key: "",
+            recaptcha_mode: "disabled",
             email_verification_required: true,
         };
     }
@@ -225,13 +225,12 @@ createAccountForm.addEventListener("submit", async (event) => {
         return;
     }
 
-    const recaptchaToken = getRecaptchaToken();
-    if (authConfig.recaptcha_enabled && !recaptchaToken) {
-        setFeedback("create-account-message", "Complete the reCAPTCHA challenge before creating your account.", "error");
-        return;
-    }
-
     try {
+        const recaptchaToken = await getRecaptchaToken();
+        if (authConfig.recaptcha_enabled && !recaptchaToken) {
+            setFeedback("create-account-message", "reCAPTCHA verification could not be completed. Please try again.", "error");
+            return;
+        }
         const email = String(formData.get("email") || "").trim();
         const data = await apiRequest("/auth/register", {
             method: "POST",
@@ -243,7 +242,6 @@ createAccountForm.addEventListener("submit", async (event) => {
             }),
         });
         createAccountForm.reset();
-        resetRecaptchaWidget();
 
         if (data?.verification_required) {
             pendingVerificationEmail = email;
@@ -261,7 +259,6 @@ createAccountForm.addEventListener("submit", async (event) => {
 
         redirectToAccount();
     } catch (error) {
-        resetRecaptchaWidget();
         setFeedback("create-account-message", String(error.message || error), "error");
     }
 });
