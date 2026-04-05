@@ -1828,7 +1828,7 @@ body.modal-open {
     display: flex;
     align-items: center;
     gap: 8px;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
 }
 
 .quantity-button {
@@ -1906,6 +1906,17 @@ button {
     font: inherit;
     background: var(--panel-strong);
     color: var(--ink);
+}
+
+.cart-item-controls .quantity-button {
+    width: 42px;
+    min-width: 42px;
+    flex: 0 0 42px;
+    padding-inline: 0;
+}
+
+.cart-item-controls .quantity-value {
+    flex: 0 0 auto;
 }
 
 input:focus,

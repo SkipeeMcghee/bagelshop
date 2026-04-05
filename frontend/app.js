@@ -180,7 +180,7 @@ function getFulfillmentPayload() {
 function getMissingDetailsForSelectedMethod() {
     const method = getSelectedFulfillmentMethod();
     return {
-        requirePhone: method === "pickup" && !getSavedPhone(),
+        requirePhone: (method === "pickup" || method === "delivery") && !getSavedPhone(),
         requireAddress: method === "delivery" && !hasRequiredDeliveryAddress(),
     };
 }
@@ -276,7 +276,7 @@ function openCheckoutDetailsModal({ requirePhone = false, requireAddress = false
 
     if (checkoutDetailsTitle) {
         checkoutDetailsTitle.textContent = requirePhone && requireAddress
-            ? "Add your pickup and delivery details"
+            ? "Add your delivery details"
             : requireAddress
                 ? "Add your delivery address"
                 : "Add your phone number";
@@ -331,7 +331,9 @@ async function saveCheckoutDetails() {
     };
 
     if (checkoutDetailsRequirements.requirePhone && !nextPhone) {
-        setCheckoutDetailsMessage("A phone number is required for pickup orders.");
+        setCheckoutDetailsMessage(checkoutDetailsRequirements.requireAddress
+            ? "A phone number is required for delivery orders."
+            : "A phone number is required for pickup orders.");
         return;
     }
     if (checkoutDetailsRequirements.requireAddress && !(nextAddress.line1 && nextAddress.city && nextAddress.state && nextAddress.postal_code)) {
