@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Everything Bagelry — Menu</title>
     <link rel="icon" type="image/png" href="../assets/images/BagelryLogo.png?v=20260404b" />
-    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="styles.css?v=20260405b" />
 </head>
 <body>
     <main class="container">
@@ -56,6 +56,7 @@
                     <button id="refresh-menu" type="button">Refresh Menu</button>
                 </div>
                 <p class="section-subtitle" id="menu-status">Loading menu...</p>
+                <div id="menu-tabs" class="menu-tabs" aria-label="Menu categories"></div>
                 <div id="menu-list" class="menu-categories" aria-live="polite"></div>
             </section>
 
@@ -71,18 +72,26 @@
                 <div id="cart-items" class="cart-items" aria-live="polite"></div>
                 <div class="cart-summary">
                     <div class="cart-total-row">
-                        <span>Total</span>
+                        <span>Subtotal</span>
                         <strong id="cart-total">$0.00</strong>
-                    </div>
-                    <div class="payment-methods-note">
-                        <span class="payment-pill">Apple Pay</span>
-                        <span class="payment-pill">Cash App Pay</span>
-                        <span class="payment-pill">Card Entry</span>
                     </div>
                 </div>
                 <form id="checkout-form" class="checkout-form">
-                    <input id="checkout-email" name="buyer_email" type="email" placeholder="Email for receipt" />
+                    <div class="checkout-section">
+                        <span class="checkout-label">How would you like to receive it?</span>
+                        <div class="fulfillment-toggle" role="radiogroup" aria-label="Fulfillment method">
+                            <label class="fulfillment-option">
+                                <input type="radio" name="fulfillment_method" value="pickup" checked />
+                                <span>Pickup</span>
+                            </label>
+                            <label class="fulfillment-option">
+                                <input type="radio" name="fulfillment_method" value="delivery" />
+                                <span>Delivery</span>
+                            </label>
+                        </div>
+                    </div>
                     <textarea id="checkout-notes" name="notes" rows="3" placeholder="Order notes (optional)"></textarea>
+                    <div id="checkout-quote" class="checkout-quote" aria-live="polite"></div>
                     <button id="checkout-button" type="submit">Pay with Square</button>
                 </form>
                 <p class="feedback-message" id="checkout-message"></p>
@@ -90,6 +99,40 @@
         </section>
     </main>
 
-    <script src="app.js"></script>
+    <div id="checkout-details-overlay" class="checkout-details-overlay" hidden>
+        <div class="checkout-details-backdrop" data-close-checkout-details></div>
+        <div class="checkout-details-card panel" role="dialog" aria-modal="true" aria-labelledby="checkout-details-title">
+            <button type="button" class="checkout-details-close ghost-button" id="checkout-details-close" aria-label="Close checkout details popup">×</button>
+            <p class="eyebrow">Almost there</p>
+            <h2 id="checkout-details-title">Add order details</h2>
+            <p id="checkout-details-subtitle" class="section-subtitle">We&apos;ll use your saved account details when possible and save anything new for next time.</p>
+            <form id="checkout-details-form" class="checkout-details-form">
+                <div id="checkout-details-phone-group" class="checkout-details-group" hidden>
+                    <label for="checkout-details-phone">Phone number</label>
+                    <input id="checkout-details-phone" name="phone" type="tel" placeholder="Phone number" />
+                </div>
+                <div id="checkout-details-address-group" class="checkout-details-group" hidden>
+                    <label for="checkout-details-line1">Delivery address</label>
+                    <input id="checkout-details-line1" name="shipping_address_line1" type="text" placeholder="Address line 1" />
+                    <input id="checkout-details-line2" name="shipping_address_line2" type="text" placeholder="Address line 2 (optional)" />
+                    <div class="address-row">
+                        <input id="checkout-details-city" name="shipping_city" type="text" placeholder="City" />
+                        <input id="checkout-details-state" name="shipping_state" type="text" placeholder="State" />
+                    </div>
+                    <div class="address-row">
+                        <input id="checkout-details-postal" name="shipping_postal_code" type="text" placeholder="ZIP / Postal code" />
+                        <input id="checkout-details-country" name="shipping_country" type="text" placeholder="Country" value="US" />
+                    </div>
+                </div>
+                <p class="feedback-message" id="checkout-details-message"></p>
+                <div class="checkout-details-actions">
+                    <button type="button" class="ghost-button" id="checkout-details-cancel">Cancel</button>
+                    <button type="submit" class="secondary-button" id="checkout-details-save">Save and continue</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="app.js?v=20260405c"></script>
 </body>
 </html>

@@ -34,6 +34,16 @@ let selectedRow = null;
 let selectedPrimaryKey = null;
 let isCreatingRecord = false;
 
+if (duplicateEventButton) {
+    duplicateEventButton.textContent = "Duplicate +7 Days";
+    duplicateEventButton.hidden = true;
+}
+
+if (ordersDetailButton) {
+    ordersDetailButton.textContent = "Detailed View";
+    ordersDetailButton.hidden = true;
+}
+
 async function managerApi(path, options = {}) {
     const response = await fetch(`${MANAGER_API_ROOT}${path}`, {
         credentials: "include",
@@ -72,6 +82,7 @@ function updateEventDuplicateButton() {
     if (!duplicateEventButton) {
         return;
     }
+    duplicateEventButton.textContent = "Duplicate +7 Days";
     duplicateEventButton.hidden = !(currentTable === "events" && selectedRow && !isCreatingRecord);
 }
 
@@ -79,6 +90,7 @@ function updateOrdersDetailButton() {
     if (!ordersDetailButton) {
         return;
     }
+    ordersDetailButton.textContent = "Detailed View";
     ordersDetailButton.hidden = !(currentTable === "orders" && Array.isArray(currentTableData?.rows) && currentTableData.rows.length > 0);
 }
 

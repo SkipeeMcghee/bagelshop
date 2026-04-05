@@ -5,6 +5,7 @@ import json
 import re
 import sqlite3
 import base64
+import math
 import hmac
 import hashlib
 import smtplib
@@ -67,6 +68,9 @@ SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "1").strip().lower() in {"1", "true", "
 SMTP_USE_SSL = os.getenv("SMTP_USE_SSL", "0").strip().lower() in {"1", "true", "yes", "on"}
 SMTP_FROM_EMAIL = os.getenv("SMTP_FROM_EMAIL", "")
 SMTP_FROM_NAME = os.getenv("SMTP_FROM_NAME", "Everything Bagelry")
+ORDER_CONFIRMATION_COMPANY_EMAIL = os.getenv(
+    "ORDER_CONFIRMATION_COMPANY_EMAIL", "brianheise22@gmail.com"
+).strip()
 
 FRONTEND_ORIGIN = f"{urlsplit(FRONTEND_BASE_URL).scheme}://{urlsplit(FRONTEND_BASE_URL).netloc}"
 
@@ -182,6 +186,62 @@ def fetch_square_category_names(category_ids: list[str]) -> dict[str, str]:
     return category_names
 
 
+def fetch_square_image_urls(item_ids: list[str]) -> dict[str, str]:
+    if not item_ids or not SQUARE_ACCESS_TOKEN:
+        return {}
+
+    try:
+        response = requests.post(
+            f"{get_square_api_base_url()}/v2/catalog/batch-retrieve",
+            headers={
+                "Authorization": f"Bearer {SQUARE_ACCESS_TOKEN}",
+                "Square-Version": SQUARE_API_VERSION,
+                "Content-Type": "application/json",
+            },
+            json={"object_ids": item_ids, "include_related_objects": True},
+            timeout=20,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except (requests.RequestException, ValueError):
+        return {}
+
+    image_urls_by_id: dict[str, str] = {}
+    item_image_ids: dict[str, list[str]] = {}
+
+    for raw_object in (payload.get("objects") or []) + (payload.get("related_objects") or []):
+        obj = model_to_dict(raw_object)
+        object_id = str(obj.get("id") or "").strip()
+        object_type = str(obj.get("type") or "").strip().upper()
+        if not object_id:
+            continue
+
+        if object_type == "ITEM":
+            item_data = model_to_dict(obj.get("item_data"))
+            image_ids = [
+                str(image_id or "").strip()
+                for image_id in (item_data.get("image_ids") or [])
+                if str(image_id or "").strip()
+            ]
+            if image_ids:
+                item_image_ids[object_id] = image_ids
+        elif object_type == "IMAGE":
+            image_data = model_to_dict(obj.get("image_data"))
+            image_url = str(image_data.get("url") or obj.get("url") or "").strip()
+            if image_url:
+                image_urls_by_id[object_id] = image_url
+
+    item_image_urls: dict[str, str] = {}
+    for item_id, image_ids in item_image_ids.items():
+        for image_id in image_ids:
+            image_url = image_urls_by_id.get(image_id)
+            if image_url:
+                item_image_urls[item_id] = image_url
+                break
+
+    return item_image_urls
+
+
 def get_square_category_name(
     item_details: dict[str, Any], category_names: dict[str, str] | None = None
 ) -> str:
@@ -214,13 +274,14 @@ def get_square_category_name(
 
 
 def normalize_square_catalog_item(
-    item: Any, *, category_names: dict[str, str] | None = None
+    item: Any, *, category_names: dict[str, str] | None = None, image_urls: dict[str, str] | None = None
 ) -> dict[str, Any]:
     item_id = getattr(item, "id", None)
     item_data = model_to_dict(item)
     item_details = model_to_dict(item_data.get("item_data"))
     name = str(item_details.get("name", "") or "").strip()
     description = str(item_details.get("description", "") or "").strip()
+    image_url = str((image_urls or {}).get(str(item_id or ""), "") or "").strip()
 
     category_name = get_square_category_name(item_details, category_names)
 
@@ -244,6 +305,7 @@ def normalize_square_catalog_item(
         "name": name,
         "category": category_name,
         "description": description,
+        "image_url": image_url,
         "price_cents": price_cents,
         "variation_id": variation_id,
     }
@@ -253,23 +315,30 @@ def sync_square_catalog_into_menu(
     conn: sqlite3.Connection, *, text_filter: str | None = None, limit: int = 100
 ) -> dict[str, int]:
     client = get_square_client()
+    ignored_categories = get_ignored_inventory_values(conn, match_type="category")
     response = client.catalog.search_items(text_filter=text_filter, limit=limit)
     catalog_items = response.items or []
     category_ids: list[str] = []
+    catalog_item_ids: list[str] = []
     for item in catalog_items:
         item_data = model_to_dict(item)
+        item_id = str(item_data.get("id") or getattr(item, "id", None) or "").strip()
+        if item_id:
+            catalog_item_ids.append(item_id)
         item_details = model_to_dict(item_data.get("item_data"))
         category_ids.extend(extract_square_category_ids(item_details))
 
     category_names = fetch_square_category_names(list(dict.fromkeys(category_ids)))
+    image_urls = fetch_square_image_urls(list(dict.fromkeys(catalog_item_ids)))
     normalized = [
-        normalize_square_catalog_item(item, category_names=category_names)
+        normalize_square_catalog_item(item, category_names=category_names, image_urls=image_urls)
         for item in catalog_items
     ]
 
     inserted = 0
     updated = 0
     skipped = 0
+    ignored = 0
     deleted = 0
     synced_catalog_ids: list[str] = []
     synced_variation_ids: list[str] = []
@@ -278,12 +347,17 @@ def sync_square_catalog_into_menu(
         name = str(item.get("name", "")).strip()
         category = str(item.get("category", "") or "").strip()
         description = str(item.get("description", "")).strip()
+        image_url = str(item.get("image_url", "") or "").strip()
         price_cents = item.get("price_cents")
         square_catalog_id = str(item.get("id") or "").strip()
         square_variation_id = str(item.get("variation_id") or "").strip()
 
         if not name or price_cents is None:
             skipped += 1
+            continue
+
+        if normalize_ignored_inventory_value(category) in ignored_categories:
+            ignored += 1
             continue
 
         if square_catalog_id:
@@ -296,7 +370,7 @@ def sync_square_catalog_into_menu(
             existing = conn.execute(
                 """
                 SELECT id, name, category, description, price_cents,
-                       square_catalog_id, square_variation_id
+                      image_url, square_catalog_id, square_variation_id
                 FROM menu_items
                 WHERE square_catalog_id = ?
                 """,
@@ -306,7 +380,7 @@ def sync_square_catalog_into_menu(
             existing = conn.execute(
                 """
                 SELECT id, name, category, description, price_cents,
-                       square_catalog_id, square_variation_id
+                      image_url, square_catalog_id, square_variation_id
                 FROM menu_items
                 WHERE name = ?
                 """,
@@ -319,6 +393,7 @@ def sync_square_catalog_into_menu(
                     str(existing["name"] or "").strip() != name,
                     str(existing["category"] or "").strip() != category,
                     str(existing["description"] or "").strip() != description,
+                    str(existing["image_url"] or "").strip() != image_url,
                     int(existing["price_cents"] or 0) != int(price_cents),
                     str(existing["square_catalog_id"] or "").strip()
                     != square_catalog_id,
@@ -331,7 +406,7 @@ def sync_square_catalog_into_menu(
                 conn.execute(
                     """
                     UPDATE menu_items
-                    SET name = ?, category = ?, description = ?, price_cents = ?,
+                    SET name = ?, category = ?, description = ?, image_url = ?, price_cents = ?,
                         square_catalog_id = ?, square_variation_id = ?
                     WHERE id = ?
                     """,
@@ -339,6 +414,7 @@ def sync_square_catalog_into_menu(
                         name,
                         category,
                         description,
+                        image_url,
                         int(price_cents),
                         square_catalog_id,
                         square_variation_id,
@@ -350,14 +426,15 @@ def sync_square_catalog_into_menu(
             conn.execute(
                 """
                 INSERT INTO menu_items
-                    (name, category, description, price_cents, is_available,
+                    (name, category, description, image_url, price_cents, is_available,
                      square_catalog_id, square_variation_id)
-                VALUES (?, ?, ?, ?, 1, ?, ?)
+                VALUES (?, ?, ?, ?, ?, 1, ?, ?)
                 """,
                 (
                     name,
                     category,
                     description,
+                    image_url,
                     int(price_cents),
                     square_catalog_id,
                     square_variation_id,
@@ -386,6 +463,7 @@ def sync_square_catalog_into_menu(
         "inserted": inserted,
         "updated": updated,
         "skipped": skipped,
+        "ignored": ignored,
         "deleted": deleted,
         "total_catalog_items": len(normalized),
         "total_variations": len(list(dict.fromkeys(synced_variation_ids))),
@@ -494,6 +572,8 @@ def init_db() -> None:
         ensure_orders_schema_columns(conn)
         ensure_users_schema_columns(conn)
         ensure_events_schema(conn)
+        ensure_delivery_schema(conn)
+        ensure_ignored_inventory_schema(conn)
         promote_default_admin(conn)
         conn.commit()
     finally:
@@ -504,6 +584,26 @@ def ensure_orders_schema_columns(conn: sqlite3.Connection) -> None:
     order_columns = {
         row["name"] for row in conn.execute("PRAGMA table_info(orders)").fetchall()
     }
+    for column_name, definition in (
+        ("subtotal_cents", "INTEGER NOT NULL DEFAULT 0"),
+        ("fulfillment_method", "TEXT NOT NULL DEFAULT 'pickup'"),
+        ("buyer_phone", "TEXT NOT NULL DEFAULT ''"),
+        ("delivery_address_line1", "TEXT NOT NULL DEFAULT ''"),
+        ("delivery_address_line2", "TEXT NOT NULL DEFAULT ''"),
+        ("delivery_city", "TEXT NOT NULL DEFAULT ''"),
+        ("delivery_state", "TEXT NOT NULL DEFAULT ''"),
+        ("delivery_postal_code", "TEXT NOT NULL DEFAULT ''"),
+        ("delivery_country", "TEXT NOT NULL DEFAULT ''"),
+        ("delivery_distance_miles", "REAL"),
+        ("delivery_fee_cents", "INTEGER NOT NULL DEFAULT 0"),
+        ("delivery_fee_waived", "INTEGER NOT NULL DEFAULT 0"),
+        ("delivery_fee_rule_label", "TEXT NOT NULL DEFAULT ''"),
+        ("shipping_required", "INTEGER NOT NULL DEFAULT 0"),
+        ("shipping_deposit_cents", "INTEGER NOT NULL DEFAULT 0"),
+        ("pickup_location_name", "TEXT NOT NULL DEFAULT ''"),
+    ):
+        if column_name not in order_columns:
+            conn.execute(f"ALTER TABLE orders ADD COLUMN {column_name} {definition}")
     if "payment_status" not in order_columns:
         conn.execute(
             """
@@ -515,16 +615,357 @@ def ensure_orders_schema_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE orders ADD COLUMN square_payment_id TEXT")
     if "paid_at" not in order_columns:
         conn.execute("ALTER TABLE orders ADD COLUMN paid_at TEXT")
+    if "confirmation_email_sent_at" not in order_columns:
+        conn.execute("ALTER TABLE orders ADD COLUMN confirmation_email_sent_at TEXT")
+
+    conn.execute(
+        """
+        UPDATE orders
+        SET subtotal_cents = CASE
+            WHEN subtotal_cents IS NULL OR subtotal_cents <= 0 THEN total_cents
+            ELSE subtotal_cents
+        END
+        WHERE subtotal_cents IS NULL OR subtotal_cents <= 0
+        """
+    )
 
     menu_columns = {
         row["name"] for row in conn.execute("PRAGMA table_info(menu_items)").fetchall()
     }
     if "category" not in menu_columns:
         conn.execute("ALTER TABLE menu_items ADD COLUMN category TEXT NOT NULL DEFAULT ''")
+    if "image_url" not in menu_columns:
+        conn.execute("ALTER TABLE menu_items ADD COLUMN image_url TEXT NOT NULL DEFAULT ''")
     if "square_catalog_id" not in menu_columns:
         conn.execute("ALTER TABLE menu_items ADD COLUMN square_catalog_id TEXT")
     if "square_variation_id" not in menu_columns:
         conn.execute("ALTER TABLE menu_items ADD COLUMN square_variation_id TEXT")
+
+
+def ensure_delivery_schema(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS delivery_settings (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            origin_address_line1 TEXT NOT NULL DEFAULT '',
+            origin_address_line2 TEXT DEFAULT NULL,
+            origin_city TEXT NOT NULL DEFAULT '',
+            origin_state TEXT NOT NULL DEFAULT '',
+            origin_postal_code TEXT NOT NULL DEFAULT '',
+            origin_country TEXT NOT NULL DEFAULT 'US',
+            base_fee_cents INTEGER NOT NULL DEFAULT 299,
+            per_mile_fee_cents INTEGER NOT NULL DEFAULT 85,
+            long_distance_shipping_threshold_miles REAL NOT NULL DEFAULT 30,
+            long_distance_deposit_cents INTEGER NOT NULL DEFAULT 20000,
+            pickup_location_name TEXT NOT NULL DEFAULT 'Daytona Supply Warehouse',
+            pickup_address_line1 TEXT NOT NULL DEFAULT '',
+            pickup_address_line2 TEXT DEFAULT NULL,
+            pickup_city TEXT NOT NULL DEFAULT '',
+            pickup_state TEXT NOT NULL DEFAULT '',
+            pickup_postal_code TEXT NOT NULL DEFAULT '',
+            pickup_country TEXT NOT NULL DEFAULT 'US',
+            require_phone_for_pickup INTEGER NOT NULL DEFAULT 1,
+            require_address_for_delivery INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+
+    delivery_columns = {
+        row["name"]: row for row in conn.execute("PRAGMA table_info(delivery_settings)").fetchall()
+    }
+    line2_columns_need_migration = any(
+        int(delivery_columns.get(column_name, {"notnull": 0})["notnull"] or 0) == 1
+        for column_name in ("origin_address_line2", "pickup_address_line2")
+    )
+    if line2_columns_need_migration:
+        conn.execute(
+            """
+            CREATE TABLE delivery_settings__new (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                origin_address_line1 TEXT NOT NULL DEFAULT '',
+                origin_address_line2 TEXT DEFAULT NULL,
+                origin_city TEXT NOT NULL DEFAULT '',
+                origin_state TEXT NOT NULL DEFAULT '',
+                origin_postal_code TEXT NOT NULL DEFAULT '',
+                origin_country TEXT NOT NULL DEFAULT 'US',
+                base_fee_cents INTEGER NOT NULL DEFAULT 299,
+                per_mile_fee_cents INTEGER NOT NULL DEFAULT 85,
+                long_distance_shipping_threshold_miles REAL NOT NULL DEFAULT 30,
+                long_distance_deposit_cents INTEGER NOT NULL DEFAULT 20000,
+                pickup_location_name TEXT NOT NULL DEFAULT 'Daytona Supply Warehouse',
+                pickup_address_line1 TEXT NOT NULL DEFAULT '',
+                pickup_address_line2 TEXT DEFAULT NULL,
+                pickup_city TEXT NOT NULL DEFAULT '',
+                pickup_state TEXT NOT NULL DEFAULT '',
+                pickup_postal_code TEXT NOT NULL DEFAULT '',
+                pickup_country TEXT NOT NULL DEFAULT 'US',
+                require_phone_for_pickup INTEGER NOT NULL DEFAULT 1,
+                require_address_for_delivery INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO delivery_settings__new (
+                id,
+                origin_address_line1,
+                origin_address_line2,
+                origin_city,
+                origin_state,
+                origin_postal_code,
+                origin_country,
+                base_fee_cents,
+                per_mile_fee_cents,
+                long_distance_shipping_threshold_miles,
+                long_distance_deposit_cents,
+                pickup_location_name,
+                pickup_address_line1,
+                pickup_address_line2,
+                pickup_city,
+                pickup_state,
+                pickup_postal_code,
+                pickup_country,
+                require_phone_for_pickup,
+                require_address_for_delivery,
+                created_at,
+                updated_at
+            )
+            SELECT
+                id,
+                origin_address_line1,
+                NULLIF(origin_address_line2, ''),
+                origin_city,
+                origin_state,
+                origin_postal_code,
+                origin_country,
+                base_fee_cents,
+                per_mile_fee_cents,
+                long_distance_shipping_threshold_miles,
+                long_distance_deposit_cents,
+                pickup_location_name,
+                pickup_address_line1,
+                NULLIF(pickup_address_line2, ''),
+                pickup_city,
+                pickup_state,
+                pickup_postal_code,
+                pickup_country,
+                require_phone_for_pickup,
+                require_address_for_delivery,
+                created_at,
+                updated_at
+            FROM delivery_settings
+            """
+        )
+        conn.execute("DROP TABLE delivery_settings")
+        conn.execute("ALTER TABLE delivery_settings__new RENAME TO delivery_settings")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS delivery_fee_waivers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            label TEXT NOT NULL DEFAULT '',
+            max_distance_miles REAL NOT NULL,
+            minimum_subtotal_cents INTEGER NOT NULL,
+            active INTEGER NOT NULL DEFAULT 1,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+
+    settings_exists = conn.execute("SELECT id FROM delivery_settings WHERE id = 1").fetchone()
+    if settings_exists is None:
+        conn.execute(
+            """
+            INSERT INTO delivery_settings (
+                id, pickup_location_name, base_fee_cents, per_mile_fee_cents,
+                long_distance_shipping_threshold_miles, long_distance_deposit_cents,
+                require_phone_for_pickup, require_address_for_delivery, updated_at
+            )
+            VALUES (1, 'Daytona Supply Warehouse', 299, 85, 30, 20000, 1, 1, ?)
+            """,
+            (now_iso(),),
+        )
+
+    waiver_count = conn.execute("SELECT COUNT(*) AS count FROM delivery_fee_waivers").fetchone()
+    if not waiver_count or int(waiver_count["count"] or 0) == 0:
+        seeded_at = now_iso()
+        conn.executemany(
+            """
+            INSERT INTO delivery_fee_waivers (
+                label, max_distance_miles, minimum_subtotal_cents, active, sort_order, updated_at
+            )
+            VALUES (?, ?, ?, 1, ?, ?)
+            """,
+            (
+                ("Within 10 miles", 10, 4000, 10, seeded_at),
+                ("Within 20 miles", 20, 6000, 20, seeded_at),
+            ),
+        )
+
+
+def ensure_ignored_inventory_schema(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS ignored_inventory (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            match_type TEXT NOT NULL DEFAULT 'category' CHECK (match_type IN ('category')),
+            match_value TEXT NOT NULL DEFAULT '',
+            active INTEGER NOT NULL DEFAULT 1,
+            notes TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (match_type, match_value)
+        )
+        """
+    )
+
+    ignored_columns = {
+        row["name"] for row in conn.execute("PRAGMA table_info(ignored_inventory)").fetchall()
+    }
+    if "notes" not in ignored_columns:
+        conn.execute("ALTER TABLE ignored_inventory ADD COLUMN notes TEXT NOT NULL DEFAULT ''")
+
+    seeded_at = now_iso()
+    for match_value, notes in (
+        ("Toasted Bagels", "Hidden from the website while retained in Square for retail."),
+        ("Untoasted Bagels", "Hidden from the website while retained in Square for retail."),
+    ):
+        conn.execute(
+            """
+            INSERT INTO ignored_inventory (match_type, match_value, active, notes, updated_at)
+            VALUES ('category', ?, 1, ?, ?)
+            ON CONFLICT(match_type, match_value) DO NOTHING
+            """,
+            (match_value, notes, seeded_at),
+        )
+
+
+def normalize_ignored_inventory_value(value: Any) -> str:
+    return str(value or "").strip().casefold()
+
+
+def get_ignored_inventory_values(
+    conn: sqlite3.Connection, *, match_type: str = "category"
+) -> set[str]:
+    ensure_ignored_inventory_schema(conn)
+    rows = conn.execute(
+        """
+        SELECT match_value
+        FROM ignored_inventory
+        WHERE active = 1 AND match_type = ?
+        ORDER BY id ASC
+        """,
+        (match_type,),
+    ).fetchall()
+    return {
+        normalize_ignored_inventory_value(row["match_value"])
+        for row in rows
+        if normalize_ignored_inventory_value(row["match_value"])
+    }
+
+
+def build_address_string(*parts: Any) -> str:
+    return ", ".join(str(part or "").strip() for part in parts if str(part or "").strip())
+
+
+def haversine_miles(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    earth_radius_miles = 3958.7613
+    lat1_rad = math.radians(lat1)
+    lat2_rad = math.radians(lat2)
+    delta_lat = math.radians(lat2 - lat1)
+    delta_lon = math.radians(lon2 - lon1)
+    a = (
+        math.sin(delta_lat / 2) ** 2
+        + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(delta_lon / 2) ** 2
+    )
+    return earth_radius_miles * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+def geocode_address(address: str) -> tuple[float, float] | None:
+    query = str(address or "").strip()
+    if not query:
+        return None
+
+    try:
+        response = requests.get(
+            "https://nominatim.openstreetmap.org/search",
+            params={"q": query, "format": "jsonv2", "limit": 1},
+            headers={"User-Agent": "EverythingBagelry/1.0"},
+            timeout=20,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except (requests.RequestException, ValueError):
+        return None
+
+    if not payload:
+        return None
+
+    try:
+        return float(payload[0]["lat"]), float(payload[0]["lon"])
+    except (KeyError, TypeError, ValueError, IndexError):
+        return None
+
+
+def build_geocode_candidates(address: dict[str, Any]) -> list[str]:
+    line1 = str(address.get("line1", "") or "").strip()
+    line2 = str(address.get("line2", "") or "").strip()
+    city = str(address.get("city", "") or "").strip()
+    state = str(address.get("state", "") or "").strip()
+    postal_code = str(address.get("postal_code", "") or "").strip()
+    country = str(address.get("country", "") or "US").strip() or "US"
+
+    country_variants = [country]
+    normalized_country = country.lower()
+    if normalized_country in {"united states", "united states of america", "usa", "us"}:
+        country_variants = ["US", "United States"]
+
+    candidates: list[str] = []
+    for country_value in country_variants:
+        for candidate in (
+            build_address_string(line1, line2, city, state, postal_code, country_value),
+            build_address_string(line1, city, state, postal_code, country_value),
+            build_address_string(city, state, postal_code, country_value),
+            build_address_string(postal_code, country_value),
+        ):
+            if candidate and candidate not in candidates:
+                candidates.append(candidate)
+
+    return candidates
+
+
+def geocode_address_with_fallback(address: dict[str, Any]) -> tuple[float, float] | None:
+    for candidate in build_geocode_candidates(address):
+        coordinates = geocode_address(candidate)
+        if coordinates is not None:
+            return coordinates
+    return None
+
+
+def get_delivery_settings(conn: sqlite3.Connection) -> sqlite3.Row:
+    ensure_delivery_schema(conn)
+    settings = conn.execute("SELECT * FROM delivery_settings WHERE id = 1").fetchone()
+    if settings is None:
+        raise ValueError("Delivery settings are not configured")
+    return settings
+
+
+def get_active_delivery_fee_waivers(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    ensure_delivery_schema(conn)
+    return conn.execute(
+        """
+        SELECT id, label, max_distance_miles, minimum_subtotal_cents, active, sort_order
+        FROM delivery_fee_waivers
+        WHERE active = 1
+        ORDER BY max_distance_miles ASC, sort_order ASC, id ASC
+        """
+    ).fetchall()
 
 
 def ensure_users_schema_columns(conn: sqlite3.Connection) -> None:
@@ -546,17 +987,11 @@ def ensure_users_schema_columns(conn: sqlite3.Connection) -> None:
             auth_provider TEXT NOT NULL DEFAULT 'local',
             google_sub TEXT UNIQUE,
             shipping_address_line1 TEXT NOT NULL DEFAULT '',
-            shipping_address_line2 TEXT NOT NULL DEFAULT '',
+            shipping_address_line2 TEXT DEFAULT NULL,
             shipping_city TEXT NOT NULL DEFAULT '',
             shipping_state TEXT NOT NULL DEFAULT '',
             shipping_postal_code TEXT NOT NULL DEFAULT '',
             shipping_country TEXT NOT NULL DEFAULT '',
-            billing_address_line1 TEXT NOT NULL DEFAULT '',
-            billing_address_line2 TEXT NOT NULL DEFAULT '',
-            billing_city TEXT NOT NULL DEFAULT '',
-            billing_state TEXT NOT NULL DEFAULT '',
-            billing_postal_code TEXT NOT NULL DEFAULT '',
-            billing_country TEXT NOT NULL DEFAULT '',
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE
@@ -625,17 +1060,11 @@ def ensure_users_schema_columns(conn: sqlite3.Connection) -> None:
                 auth_provider TEXT NOT NULL DEFAULT 'local',
                 google_sub TEXT UNIQUE,
                 shipping_address_line1 TEXT NOT NULL DEFAULT '',
-                shipping_address_line2 TEXT NOT NULL DEFAULT '',
+                shipping_address_line2 TEXT DEFAULT NULL,
                 shipping_city TEXT NOT NULL DEFAULT '',
                 shipping_state TEXT NOT NULL DEFAULT '',
                 shipping_postal_code TEXT NOT NULL DEFAULT '',
                 shipping_country TEXT NOT NULL DEFAULT '',
-                billing_address_line1 TEXT NOT NULL DEFAULT '',
-                billing_address_line2 TEXT NOT NULL DEFAULT '',
-                billing_city TEXT NOT NULL DEFAULT '',
-                billing_state TEXT NOT NULL DEFAULT '',
-                billing_postal_code TEXT NOT NULL DEFAULT '',
-                billing_country TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE
@@ -652,8 +1081,6 @@ def ensure_users_schema_columns(conn: sqlite3.Connection) -> None:
                 is_google_account, auth_provider, google_sub,
                 shipping_address_line1, shipping_address_line2, shipping_city,
                 shipping_state, shipping_postal_code, shipping_country,
-                billing_address_line1, billing_address_line2, billing_city,
-                billing_state, billing_postal_code, billing_country,
                 created_at, updated_at
             )
             SELECT
@@ -689,14 +1116,85 @@ def ensure_users_schema_columns(conn: sqlite3.Connection) -> None:
                 '',
                 '',
                 '',
-                '',
-                '',
-                '',
-                '',
-                '',
-                '',
                 COALESCE(created_at, CURRENT_TIMESTAMP),
                 COALESCE(updated_at, CURRENT_TIMESTAMP)
+            FROM users
+            """
+        )
+        conn.execute("DROP TABLE users")
+        conn.execute("ALTER TABLE users__new RENAME TO users")
+        user_columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(users)").fetchall()
+        }
+
+    user_column_info = {
+        row["name"]: row for row in conn.execute("PRAGMA table_info(users)").fetchall()
+    }
+    billing_columns_present = any(
+        column_name in user_column_info
+        for column_name in (
+            "billing_address_line1",
+            "billing_address_line2",
+            "billing_city",
+            "billing_state",
+            "billing_postal_code",
+            "billing_country",
+        )
+    )
+    line2_columns_need_migration = any(
+        int(user_column_info.get(column_name, {"notnull": 0})["notnull"] or 0) == 1
+        for column_name in ("shipping_address_line2",)
+    )
+    if billing_columns_present or line2_columns_need_migration:
+        conn.execute("DROP TABLE IF EXISTS users__new")
+        conn.execute(
+            """
+            CREATE TABLE users__new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                customer_id INTEGER NOT NULL,
+                name TEXT NOT NULL DEFAULT '',
+                email TEXT UNIQUE,
+                password_hash TEXT,
+                email_verified INTEGER NOT NULL DEFAULT 1,
+                email_verified_at TEXT,
+                email_verification_token_hash TEXT,
+                email_verification_sent_at TEXT,
+                phone TEXT NOT NULL DEFAULT '',
+                isadmin INTEGER NOT NULL DEFAULT 0,
+                is_google_account INTEGER NOT NULL DEFAULT 0,
+                auth_provider TEXT NOT NULL DEFAULT 'local',
+                google_sub TEXT UNIQUE,
+                shipping_address_line1 TEXT NOT NULL DEFAULT '',
+                shipping_address_line2 TEXT DEFAULT NULL,
+                shipping_city TEXT NOT NULL DEFAULT '',
+                shipping_state TEXT NOT NULL DEFAULT '',
+                shipping_postal_code TEXT NOT NULL DEFAULT '',
+                shipping_country TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO users__new (
+                id, customer_id, name, email, password_hash,
+                email_verified, email_verified_at, email_verification_token_hash,
+                email_verification_sent_at, phone, isadmin,
+                is_google_account, auth_provider, google_sub,
+                shipping_address_line1, shipping_address_line2, shipping_city,
+                shipping_state, shipping_postal_code, shipping_country,
+                created_at, updated_at
+            )
+            SELECT
+                id, customer_id, name, email, password_hash,
+                email_verified, email_verified_at, email_verification_token_hash,
+                email_verification_sent_at, phone, isadmin,
+                is_google_account, auth_provider, google_sub,
+                shipping_address_line1, NULLIF(shipping_address_line2, ''), shipping_city,
+                shipping_state, shipping_postal_code, shipping_country,
+                created_at, updated_at
             FROM users
             """
         )
@@ -721,17 +1219,11 @@ def ensure_users_schema_columns(conn: sqlite3.Connection) -> None:
         ("auth_provider", "TEXT NOT NULL DEFAULT 'local'"),
         ("google_sub", "TEXT"),
         ("shipping_address_line1", "TEXT NOT NULL DEFAULT ''"),
-        ("shipping_address_line2", "TEXT NOT NULL DEFAULT ''"),
+        ("shipping_address_line2", "TEXT DEFAULT NULL"),
         ("shipping_city", "TEXT NOT NULL DEFAULT ''"),
         ("shipping_state", "TEXT NOT NULL DEFAULT ''"),
         ("shipping_postal_code", "TEXT NOT NULL DEFAULT ''"),
         ("shipping_country", "TEXT NOT NULL DEFAULT ''"),
-        ("billing_address_line1", "TEXT NOT NULL DEFAULT ''"),
-        ("billing_address_line2", "TEXT NOT NULL DEFAULT ''"),
-        ("billing_city", "TEXT NOT NULL DEFAULT ''"),
-        ("billing_state", "TEXT NOT NULL DEFAULT ''"),
-        ("billing_postal_code", "TEXT NOT NULL DEFAULT ''"),
-        ("billing_country", "TEXT NOT NULL DEFAULT ''"),
         ("created_at", "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP"),
         ("updated_at", "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP"),
     ):
@@ -893,8 +1385,321 @@ def send_email_message(*, to_email: str, subject: str, body: str) -> str:
                 server.send_message(message)
         return "smtp"
 
-    print(f"[email verification] To: {to_email}\nSubject: {subject}\n\n{body}", flush=True)
+    print(f"[email] To: {to_email}\nSubject: {subject}\n\n{body}", flush=True)
     return "console"
+
+
+def format_money_text(amount_cents: int) -> str:
+    return f"${int(amount_cents) / 100:.2f}"
+
+
+def format_address_text(address: dict[str, str]) -> str:
+    lines = [str(address.get("line1", "") or "").strip()]
+    line2 = str(address.get("line2", "") or "").strip()
+    if line2:
+        lines.append(line2)
+
+    city = str(address.get("city", "") or "").strip()
+    state = str(address.get("state", "") or "").strip()
+    postal_code = str(address.get("postal_code", "") or "").strip()
+    country = str(address.get("country", "") or "").strip()
+
+    locality_parts = [part for part in (city, state, postal_code) if part]
+    if locality_parts:
+        lines.append(", ".join(locality_parts[:2]) + (f" {locality_parts[2]}" if len(locality_parts) > 2 else ""))
+    if country:
+        lines.append(country)
+
+    return "\n".join(line for line in lines if line)
+
+
+def get_order_confirmation_payload(
+    conn: sqlite3.Connection, order_id: int
+) -> dict[str, Any] | None:
+    settings = get_delivery_settings(conn)
+    order = conn.execute(
+        """
+        SELECT o.id, o.customer_id, o.notes, o.subtotal_cents, o.total_cents,
+               o.fulfillment_method, o.buyer_phone,
+               o.delivery_address_line1, o.delivery_address_line2, o.delivery_city,
+               o.delivery_state, o.delivery_postal_code, o.delivery_country,
+               o.delivery_distance_miles, o.delivery_fee_cents, o.delivery_fee_waived,
+               o.delivery_fee_rule_label, o.shipping_required, o.shipping_deposit_cents,
+               o.pickup_location_name, o.payment_status, o.square_payment_id, o.paid_at,
+               o.created_at, o.confirmation_email_sent_at,
+               COALESCE(NULLIF(u.name, ''), c.name, 'Guest customer') AS buyer_name,
+               COALESCE(NULLIF(u.email, ''), c.email, '') AS buyer_email
+        FROM orders o
+        LEFT JOIN customers c ON c.id = o.customer_id
+        LEFT JOIN users u ON u.customer_id = o.customer_id
+        WHERE o.id = ?
+        ORDER BY u.id ASC
+        LIMIT 1
+        """,
+        (order_id,),
+    ).fetchone()
+    if order is None:
+        return None
+
+    item_rows = conn.execute(
+        """
+        SELECT oi.quantity, oi.unit_price_cents, oi.line_total_cents,
+               mi.name AS menu_item_name
+        FROM order_items oi
+        LEFT JOIN menu_items mi ON mi.id = oi.menu_item_id
+        WHERE oi.order_id = ?
+        ORDER BY oi.id ASC
+        """,
+        (order_id,),
+    ).fetchall()
+
+    items: list[dict[str, Any]] = []
+    subtotal_cents = int(order["subtotal_cents"] or 0)
+    computed_subtotal_cents = 0
+    for item in item_rows:
+        line_total_cents = int(item["line_total_cents"] or 0)
+        computed_subtotal_cents += line_total_cents
+        items.append(
+            {
+                "name": str(item["menu_item_name"] or "Menu item").strip() or "Menu item",
+                "quantity": int(item["quantity"] or 0),
+                "unit_price_cents": int(item["unit_price_cents"] or 0),
+                "line_total_cents": line_total_cents,
+            }
+        )
+    if subtotal_cents <= 0:
+        subtotal_cents = computed_subtotal_cents
+
+    delivery_address = {
+        "line1": str(order["delivery_address_line1"] or "").strip(),
+        "line2": str(order["delivery_address_line2"] or "").strip(),
+        "city": str(order["delivery_city"] or "").strip(),
+        "state": str(order["delivery_state"] or "").strip(),
+        "postal_code": str(order["delivery_postal_code"] or "").strip(),
+        "country": str(order["delivery_country"] or "").strip(),
+    }
+    pickup_address = {
+        "line1": str(settings["pickup_address_line1"] or "").strip(),
+        "line2": str(settings["pickup_address_line2"] or "").strip(),
+        "city": str(settings["pickup_city"] or "").strip(),
+        "state": str(settings["pickup_state"] or "").strip(),
+        "postal_code": str(settings["pickup_postal_code"] or "").strip(),
+        "country": str(settings["pickup_country"] or "").strip(),
+    }
+    total_cents = int(order["total_cents"] or 0)
+    delivery_fee_cents = int(order["delivery_fee_cents"] or 0)
+    shipping_deposit_cents = int(order["shipping_deposit_cents"] or 0)
+    extra_fee_cents = max(
+        0, total_cents - subtotal_cents - delivery_fee_cents - shipping_deposit_cents
+    )
+    fees: list[dict[str, Any]] = []
+    if delivery_fee_cents > 0:
+        label = "Delivery fee"
+        rule_label = str(order["delivery_fee_rule_label"] or "").strip()
+        if rule_label:
+            label = f"Delivery fee ({rule_label})"
+        fees.append({"label": label, "amount_cents": delivery_fee_cents})
+    if shipping_deposit_cents > 0:
+        fees.append({"label": "Shipping deposit", "amount_cents": shipping_deposit_cents})
+    if extra_fee_cents > 0:
+        fees.append({"label": "Additional fees", "amount_cents": extra_fee_cents})
+
+    paid_at = str(order["paid_at"] or "").strip()
+    if not paid_at and str(order["payment_status"] or "").strip().lower() == "paid":
+        paid_at = str(order["created_at"] or "").strip()
+
+    return {
+        "id": int(order["id"]),
+        "buyer_name": str(order["buyer_name"] or "Guest customer").strip() or "Guest customer",
+        "buyer_email": str(order["buyer_email"] or "").strip(),
+        "notes": str(order["notes"] or "").strip(),
+        "subtotal_cents": subtotal_cents,
+        "total_cents": total_cents,
+        "fulfillment_method": str(order["fulfillment_method"] or "pickup").strip() or "pickup",
+        "buyer_phone": str(order["buyer_phone"] or "").strip(),
+        "delivery_address": delivery_address,
+        "delivery_distance_miles": order["delivery_distance_miles"],
+        "delivery_fee_waived": bool(order["delivery_fee_waived"]),
+        "delivery_fee_rule_label": str(order["delivery_fee_rule_label"] or "").strip(),
+        "shipping_required": bool(order["shipping_required"]),
+        "pickup_location_name": str(order["pickup_location_name"] or "").strip(),
+        "pickup_address": pickup_address,
+        "payment_status": str(order["payment_status"] or "").strip(),
+        "square_payment_id": str(order["square_payment_id"] or "").strip(),
+        "paid_at": paid_at,
+        "created_at": str(order["created_at"] or "").strip(),
+        "confirmation_email_sent_at": str(order["confirmation_email_sent_at"] or "").strip(),
+        "items": items,
+        "fees": fees,
+    }
+
+
+def build_order_confirmation_messages(
+    order_payload: dict[str, Any],
+) -> tuple[str, str, str, str]:
+    order_id = int(order_payload["id"])
+    subject = f"Everything Bagelry order confirmation #{order_id}"
+    company_subject = f"Company copy: {subject}"
+
+    item_lines = [
+        (
+            f"- {int(item['quantity'])} x {item['name']} "
+            f"@ {format_money_text(int(item['unit_price_cents']))} = "
+            f"{format_money_text(int(item['line_total_cents']))}"
+        )
+        for item in order_payload["items"]
+    ]
+    if not item_lines:
+        item_lines = ["- No line items were captured."]
+
+    fee_lines = [
+        f"- {fee['label']}: {format_money_text(int(fee['amount_cents']))}"
+        for fee in order_payload["fees"]
+    ]
+    if not fee_lines:
+        fee_lines = ["- No additional fees"]
+
+    fulfillment_method = str(order_payload["fulfillment_method"] or "pickup").strip().lower()
+    fulfillment_lines = [
+        f"Fulfillment method: {fulfillment_method.title()}",
+    ]
+    if fulfillment_method == "delivery":
+        address_text = format_address_text(order_payload["delivery_address"])
+        if address_text:
+            fulfillment_lines.extend(["Delivery address:", address_text])
+        distance_miles = order_payload.get("delivery_distance_miles")
+        if distance_miles not in (None, ""):
+            try:
+                fulfillment_lines.append(f"Delivery distance: {float(distance_miles):.1f} miles")
+            except (TypeError, ValueError):
+                pass
+        if order_payload.get("shipping_required"):
+            fulfillment_lines.append(
+                "Shipping: Overnight shipping coordination is required for this order."
+            )
+    else:
+        pickup_location_name = str(order_payload.get("pickup_location_name", "") or "").strip()
+        if pickup_location_name:
+            fulfillment_lines.append(f"Pickup location: {pickup_location_name}")
+        pickup_address_text = format_address_text(
+            order_payload.get("pickup_address") or {}
+        )
+        if pickup_address_text:
+            fulfillment_lines.extend(["Pickup address:", pickup_address_text])
+
+    buyer_phone = str(order_payload.get("buyer_phone", "") or "").strip()
+    if buyer_phone:
+        fulfillment_lines.append(f"Phone on file: {buyer_phone}")
+
+    notes = str(order_payload.get("notes", "") or "").strip()
+    notes_section = notes or "No order notes provided."
+    paid_at = str(order_payload.get("paid_at", "") or "").strip() or str(
+        order_payload.get("created_at", "") or ""
+    ).strip()
+
+    summary_lines = [
+        f"Order ID: {order_id}",
+        f"Payment status: {str(order_payload.get('payment_status', '') or '').title()}",
+    ]
+    if paid_at:
+        summary_lines.append(f"Processed at: {paid_at}")
+    if order_payload.get("square_payment_id"):
+        summary_lines.append(f"Square payment ID: {order_payload['square_payment_id']}")
+    summary_lines.extend(
+        [
+            f"Subtotal: {format_money_text(int(order_payload['subtotal_cents']))}",
+            *fee_lines,
+            f"Total: {format_money_text(int(order_payload['total_cents']))}",
+        ]
+    )
+
+    customer_body = (
+        f"Hi {order_payload['buyer_name']},\n\n"
+        "Thanks for your order with Everything Bagelry. Your payment was processed, "
+        "and this email confirms that we recorded your order details below.\n\n"
+        + "\n".join(summary_lines)
+        + "\n\nItems:\n"
+        + "\n".join(item_lines)
+        + "\n\n"
+        + "\n".join(fulfillment_lines)
+        + "\n\nOrder notes:\n"
+        + notes_section
+        + "\n\nIf anything looks wrong, please reply to this email or contact the shop."
+    )
+
+    company_body = (
+        "Internal order confirmation copy.\n\n"
+        + customer_body
+    )
+    return subject, customer_body, company_subject, company_body
+
+
+def send_order_confirmation_emails(
+    conn: sqlite3.Connection, order_id: int
+) -> dict[str, Any]:
+    order_payload = get_order_confirmation_payload(conn, order_id)
+    if order_payload is None:
+        return {"sent": False, "reason": "order_not_found", "order_id": order_id}
+    if order_payload["confirmation_email_sent_at"]:
+        return {"sent": False, "reason": "already_sent", "order_id": order_id}
+
+    subject, customer_body, company_subject, company_body = build_order_confirmation_messages(
+        order_payload
+    )
+    deliveries: list[dict[str, str]] = []
+
+    customer_email = str(order_payload["buyer_email"] or "").strip()
+    if customer_email:
+        try:
+            delivery = send_email_message(
+                to_email=customer_email,
+                subject=subject,
+                body=customer_body,
+            )
+            deliveries.append({"recipient": customer_email, "kind": "customer", "delivery": delivery})
+        except Exception as exc:
+            print(
+                f"[order confirmation] Failed sending customer email for order {order_id}: {exc}",
+                flush=True,
+            )
+    else:
+        print(
+            f"[order confirmation] No customer email on file for order {order_id}",
+            flush=True,
+        )
+
+    if ORDER_CONFIRMATION_COMPANY_EMAIL:
+        try:
+            delivery = send_email_message(
+                to_email=ORDER_CONFIRMATION_COMPANY_EMAIL,
+                subject=company_subject,
+                body=company_body,
+            )
+            deliveries.append(
+                {
+                    "recipient": ORDER_CONFIRMATION_COMPANY_EMAIL,
+                    "kind": "company",
+                    "delivery": delivery,
+                }
+            )
+        except Exception as exc:
+            print(
+                f"[order confirmation] Failed sending company copy for order {order_id}: {exc}",
+                flush=True,
+            )
+
+    if deliveries:
+        conn.execute(
+            "UPDATE orders SET confirmation_email_sent_at = ? WHERE id = ?",
+            (now_iso(), order_id),
+        )
+
+    return {
+        "sent": bool(deliveries),
+        "reason": "delivered" if deliveries else "no_recipients_or_delivery_failed",
+        "order_id": order_id,
+        "deliveries": deliveries,
+    }
 
 
 def issue_email_verification(conn: sqlite3.Connection, user: sqlite3.Row) -> dict[str, str]:
@@ -972,14 +1777,6 @@ def get_public_user_dict(
             "postal_code": row["shipping_postal_code"],
             "country": row["shipping_country"],
         },
-        "billing_address": {
-            "line1": row["billing_address_line1"],
-            "line2": row["billing_address_line2"],
-            "city": row["billing_city"],
-            "state": row["billing_state"],
-            "postal_code": row["billing_postal_code"],
-            "country": row["billing_country"],
-        },
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -1011,8 +1808,6 @@ def get_user_by_id(conn: sqlite3.Connection, user_id: int) -> sqlite3.Row | None
                is_google_account, auth_provider, google_sub,
              shipping_address_line1, shipping_address_line2, shipping_city,
              shipping_state, shipping_postal_code, shipping_country,
-             billing_address_line1, billing_address_line2, billing_city,
-             billing_state, billing_postal_code, billing_country,
              created_at, updated_at
         FROM users
         WHERE id = ?
@@ -1537,8 +2332,14 @@ def admin_get_order_details():
     try:
         order_rows = conn.execute(
             """
-            SELECT o.id, o.customer_id, o.status, o.total_cents, o.notes,
-                   o.payment_status, o.square_payment_id, o.paid_at, o.created_at,
+             SELECT o.id, o.customer_id, o.status, o.subtotal_cents, o.total_cents, o.notes,
+                 o.fulfillment_method, o.buyer_phone,
+                 o.delivery_address_line1, o.delivery_address_line2, o.delivery_city,
+                 o.delivery_state, o.delivery_postal_code, o.delivery_country,
+                 o.delivery_distance_miles, o.delivery_fee_cents, o.delivery_fee_waived,
+                 o.delivery_fee_rule_label, o.shipping_required, o.shipping_deposit_cents,
+                 o.pickup_location_name,
+                 o.payment_status, o.square_payment_id, o.paid_at, o.created_at,
                    c.name AS customer_name, c.email AS customer_email
             FROM orders o
             LEFT JOIN customers c ON c.id = o.customer_id
@@ -1572,11 +2373,25 @@ def admin_get_order_details():
                 subtotal_cents += item_dict["line_total_cents"]
                 items.append(item_dict)
 
+            subtotal_from_order = int(order["subtotal_cents"] or 0)
+            if subtotal_from_order > 0:
+                subtotal_cents = subtotal_from_order
+
             total_cents = int(order["total_cents"] or 0)
-            fee_total_cents = max(0, total_cents - subtotal_cents)
             fees: list[dict[str, Any]] = []
-            if fee_total_cents > 0:
-                fees.append({"label": "Additional fees", "amount_cents": fee_total_cents})
+            delivery_fee_cents = int(order["delivery_fee_cents"] or 0)
+            shipping_deposit_cents = int(order["shipping_deposit_cents"] or 0)
+            if delivery_fee_cents > 0:
+                label = "Delivery fee"
+                rule_label = str(order["delivery_fee_rule_label"] or "").strip()
+                if rule_label:
+                    label = f"Delivery fee ({rule_label})"
+                fees.append({"label": label, "amount_cents": delivery_fee_cents})
+            if shipping_deposit_cents > 0:
+                fees.append({"label": "Shipping deposit", "amount_cents": shipping_deposit_cents})
+            extra_fee_cents = max(0, total_cents - subtotal_cents - delivery_fee_cents - shipping_deposit_cents)
+            if extra_fee_cents > 0:
+                fees.append({"label": "Additional fees", "amount_cents": extra_fee_cents})
 
             buyer_name = str(order["customer_name"] or "").strip() or "Guest customer"
             buyer_email = str(order["customer_email"] or "").strip()
@@ -1591,15 +2406,32 @@ def admin_get_order_details():
                     "buyer_name": buyer_name,
                     "buyer_email": buyer_email,
                     "status": order["status"],
+                    "subtotal_cents": subtotal_cents,
+                    "fulfillment_method": str(order["fulfillment_method"] or "pickup"),
+                    "buyer_phone": str(order["buyer_phone"] or "").strip(),
+                    "delivery_address": {
+                        "line1": str(order["delivery_address_line1"] or "").strip(),
+                        "line2": str(order["delivery_address_line2"] or "").strip(),
+                        "city": str(order["delivery_city"] or "").strip(),
+                        "state": str(order["delivery_state"] or "").strip(),
+                        "postal_code": str(order["delivery_postal_code"] or "").strip(),
+                        "country": str(order["delivery_country"] or "").strip(),
+                    },
+                    "delivery_distance_miles": order["delivery_distance_miles"],
+                    "delivery_fee_cents": delivery_fee_cents,
+                    "delivery_fee_waived": bool(order["delivery_fee_waived"]),
+                    "delivery_fee_rule_label": str(order["delivery_fee_rule_label"] or "").strip(),
+                    "shipping_required": bool(order["shipping_required"]),
+                    "shipping_deposit_cents": shipping_deposit_cents,
+                    "pickup_location_name": str(order["pickup_location_name"] or "").strip(),
                     "payment_status": order["payment_status"],
                     "square_payment_id": order["square_payment_id"],
                     "paid_at": paid_at,
                     "created_at": order["created_at"],
                     "notes": order["notes"],
                     "items": items,
-                    "subtotal_cents": subtotal_cents,
                     "fees": fees,
-                    "fee_total_cents": fee_total_cents,
+                    "fee_total_cents": sum(int(fee["amount_cents"]) for fee in fees),
                     "total_cents": total_cents,
                 }
             )
@@ -1746,8 +2578,6 @@ def login_local_user():
                      is_google_account, auth_provider, google_sub,
                      shipping_address_line1, shipping_address_line2, shipping_city,
                      shipping_state, shipping_postal_code, shipping_country,
-                     billing_address_line1, billing_address_line2, billing_city,
-                     billing_state, billing_postal_code, billing_country,
                      created_at, updated_at
             FROM users
             WHERE email = ?
@@ -1799,8 +2629,6 @@ def resend_verification_email():
                    is_google_account, auth_provider, google_sub,
                    shipping_address_line1, shipping_address_line2, shipping_city,
                    shipping_state, shipping_postal_code, shipping_country,
-                   billing_address_line1, billing_address_line2, billing_city,
-                   billing_state, billing_postal_code, billing_country,
                    created_at, updated_at
             FROM users
             WHERE email = ?
@@ -1838,8 +2666,6 @@ def verify_email_address():
                    is_google_account, auth_provider, google_sub,
                    shipping_address_line1, shipping_address_line2, shipping_city,
                    shipping_state, shipping_postal_code, shipping_country,
-                   billing_address_line1, billing_address_line2, billing_city,
-                   billing_state, billing_postal_code, billing_country,
                    created_at, updated_at
             FROM users
             WHERE email_verification_token_hash = ?
@@ -1958,8 +2784,6 @@ def finish_google_auth():
                      is_google_account, auth_provider, google_sub,
                      shipping_address_line1, shipping_address_line2, shipping_city,
                      shipping_state, shipping_postal_code, shipping_country,
-                     billing_address_line1, billing_address_line2, billing_city,
-                     billing_state, billing_postal_code, billing_country,
                      created_at, updated_at
             FROM users
             WHERE google_sub = ? OR email = ?
@@ -2160,13 +2984,54 @@ def create_local_order(
     notes: str,
     expanded_items: list[dict[str, Any]],
     total_cents: int,
+    *,
+    subtotal_cents: int | None = None,
+    fulfillment_method: str = "pickup",
+    buyer_phone: str = "",
+    delivery_address: dict[str, str] | None = None,
+    delivery_distance_miles: float | None = None,
+    delivery_fee_cents: int = 0,
+    delivery_fee_waived: bool = False,
+    delivery_fee_rule_label: str = "",
+    shipping_required: bool = False,
+    shipping_deposit_cents: int = 0,
+    pickup_location_name: str = "",
 ) -> int:
+    address = delivery_address or {}
     cursor = conn.execute(
         """
-        INSERT INTO orders (customer_id, status, total_cents, notes, payment_status)
-        VALUES (?, 'new', ?, ?, 'pending')
+        INSERT INTO orders (
+            customer_id, status, subtotal_cents, total_cents, notes,
+            fulfillment_method, buyer_phone,
+            delivery_address_line1, delivery_address_line2, delivery_city,
+            delivery_state, delivery_postal_code, delivery_country,
+            delivery_distance_miles, delivery_fee_cents, delivery_fee_waived,
+            delivery_fee_rule_label, shipping_required, shipping_deposit_cents,
+            pickup_location_name, payment_status
+        )
+        VALUES (?, 'new', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
         """,
-        (customer_id, total_cents, notes),
+        (
+            customer_id,
+            int(subtotal_cents if subtotal_cents is not None else total_cents),
+            int(total_cents),
+            notes,
+            fulfillment_method,
+            buyer_phone,
+            str(address.get("line1", "") or "").strip(),
+            str(address.get("line2", "") or "").strip(),
+            str(address.get("city", "") or "").strip(),
+            str(address.get("state", "") or "").strip(),
+            str(address.get("postal_code", "") or "").strip(),
+            str(address.get("country", "") or "").strip(),
+            delivery_distance_miles,
+            int(delivery_fee_cents),
+            1 if delivery_fee_waived else 0,
+            str(delivery_fee_rule_label or "").strip(),
+            1 if shipping_required else 0,
+            int(shipping_deposit_cents),
+            str(pickup_location_name or "").strip(),
+        ),
     )
     order_id = cursor.lastrowid
 
@@ -2194,12 +3059,244 @@ def create_local_order(
     return order_id
 
 
+def get_checkout_user(conn: sqlite3.Connection, customer_id: int | None) -> sqlite3.Row | None:
+    current = get_current_user(conn)
+    if current is not None:
+        return current
+    if customer_id is None:
+        return None
+    return conn.execute(
+        """
+        SELECT id, customer_id, name, email, password_hash,
+               email_verified, email_verified_at, email_verification_token_hash,
+               email_verification_sent_at, phone, isadmin,
+               is_google_account, auth_provider, google_sub,
+               shipping_address_line1, shipping_address_line2, shipping_city,
+               shipping_state, shipping_postal_code, shipping_country,
+               created_at, updated_at
+        FROM users
+        WHERE customer_id = ?
+        LIMIT 1
+        """,
+        (customer_id,),
+    ).fetchone()
+
+
+def build_delivery_address_from_payload(data: dict[str, Any], user: sqlite3.Row | None = None) -> dict[str, str]:
+    return {
+        "line1": str(data.get("delivery_address_line1", user["shipping_address_line1"] if user else "") or "").strip(),
+        "line2": str(data.get("delivery_address_line2", user["shipping_address_line2"] if user else "") or "").strip(),
+        "city": str(data.get("delivery_city", user["shipping_city"] if user else "") or "").strip(),
+        "state": str(data.get("delivery_state", user["shipping_state"] if user else "") or "").strip(),
+        "postal_code": str(data.get("delivery_postal_code", user["shipping_postal_code"] if user else "") or "").strip(),
+        "country": str(data.get("delivery_country", user["shipping_country"] if user else "US") or "").strip() or "US",
+    }
+
+
+def build_fulfillment_quote(
+    conn: sqlite3.Connection,
+    *,
+    data: dict[str, Any],
+    subtotal_cents: int,
+    user: sqlite3.Row | None = None,
+) -> dict[str, Any]:
+    settings = get_delivery_settings(conn)
+    waivers = get_active_delivery_fee_waivers(conn)
+
+    fulfillment_method = str(data.get("fulfillment_method", "pickup") or "pickup").strip().lower()
+    if fulfillment_method not in {"pickup", "delivery"}:
+        raise ValueError("Choose pickup or delivery.")
+
+    buyer_phone = str(data.get("buyer_phone", user["phone"] if user else "") or "").strip()
+    pickup_location_name = str(settings["pickup_location_name"] or "Daytona Supply Warehouse").strip() or "Daytona Supply Warehouse"
+    pickup_address = {
+        "line1": str(settings["pickup_address_line1"] or "").strip(),
+        "line2": str(settings["pickup_address_line2"] or "").strip(),
+        "city": str(settings["pickup_city"] or "").strip(),
+        "state": str(settings["pickup_state"] or "").strip(),
+        "postal_code": str(settings["pickup_postal_code"] or "").strip(),
+        "country": str(settings["pickup_country"] or "").strip(),
+    }
+
+    if fulfillment_method == "pickup":
+        if bool(settings["require_phone_for_pickup"]) and not buyer_phone:
+            raise ValueError("A phone number is required for pickup orders.")
+        return {
+            "fulfillment_method": "pickup",
+            "buyer_phone": buyer_phone,
+            "delivery_address": {
+                "line1": "",
+                "line2": "",
+                "city": "",
+                "state": "",
+                "postal_code": "",
+                "country": "",
+            },
+            "distance_miles": None,
+            "delivery_fee_cents": 0,
+            "delivery_fee_waived": False,
+            "delivery_fee_rule_label": "",
+            "shipping_required": False,
+            "shipping_deposit_cents": 0,
+            "pickup_location_name": pickup_location_name,
+            "pickup_location_address": pickup_address,
+            "subtotal_cents": int(subtotal_cents),
+            "total_cents": int(subtotal_cents),
+            "note": "Pickup orders are collected from Daytona Supply's warehouse. Keep a phone number on file so we can coordinate pickup.",
+        }
+
+    delivery_address = build_delivery_address_from_payload(data, user)
+    required_parts = (
+        delivery_address["line1"],
+        delivery_address["city"],
+        delivery_address["state"],
+        delivery_address["postal_code"],
+    )
+    if bool(settings["require_address_for_delivery"]) and not all(required_parts):
+        raise ValueError("Delivery requires your address line 1, city, state, and postal code.")
+
+    origin_address = {
+        "line1": str(settings["origin_address_line1"] or "").strip(),
+        "line2": str(settings["origin_address_line2"] or "").strip(),
+        "city": str(settings["origin_city"] or "").strip(),
+        "state": str(settings["origin_state"] or "").strip(),
+        "postal_code": str(settings["origin_postal_code"] or "").strip(),
+        "country": str(settings["origin_country"] or "US").strip() or "US",
+    }
+    if not build_address_string(
+        origin_address["line1"],
+        origin_address["line2"],
+        origin_address["city"],
+        origin_address["state"],
+        origin_address["postal_code"],
+        origin_address["country"],
+    ):
+        raise ValueError("Delivery origin is not configured yet. Update the delivery_settings table first.")
+
+    origin_coords = geocode_address_with_fallback(origin_address)
+    destination_coords = geocode_address_with_fallback(delivery_address)
+    if origin_coords is None or destination_coords is None:
+        raise ValueError("We could not verify that delivery address. Double-check it and try again.")
+
+    distance_miles = round(haversine_miles(origin_coords[0], origin_coords[1], destination_coords[0], destination_coords[1]), 2)
+    shipping_threshold_miles = float(settings["long_distance_shipping_threshold_miles"] or 30)
+    shipping_required = distance_miles > shipping_threshold_miles
+    shipping_deposit_cents = int(settings["long_distance_deposit_cents"] or 0) if shipping_required else 0
+    delivery_fee_cents = 0
+    delivery_fee_waived = False
+    delivery_fee_rule_label = ""
+
+    if not shipping_required:
+        delivery_fee_cents = int(settings["base_fee_cents"] or 0) + int(round(distance_miles * int(settings["per_mile_fee_cents"] or 0)))
+        for rule in waivers:
+            max_distance = float(rule["max_distance_miles"] or 0)
+            if distance_miles <= max_distance:
+                delivery_fee_rule_label = str(rule["label"] or "").strip()
+                minimum_subtotal_cents = int(rule["minimum_subtotal_cents"] or 0)
+                if subtotal_cents >= minimum_subtotal_cents:
+                    delivery_fee_waived = True
+                    delivery_fee_cents = 0
+                break
+
+    note = (
+        "Orders over the normal delivery radius are handled as overnight cold-pack shipments. "
+        "A $200 deposit is collected up front and any unused portion is refunded after shipping is purchased."
+        if shipping_required
+        else "Delivery fees are based on distance and may be waived when your subtotal meets the distance-based minimum."
+    )
+
+    return {
+        "fulfillment_method": "delivery",
+        "buyer_phone": buyer_phone,
+        "delivery_address": delivery_address,
+        "distance_miles": distance_miles,
+        "delivery_fee_cents": int(delivery_fee_cents),
+        "delivery_fee_waived": delivery_fee_waived,
+        "delivery_fee_rule_label": delivery_fee_rule_label,
+        "shipping_required": shipping_required,
+        "shipping_deposit_cents": int(shipping_deposit_cents),
+        "pickup_location_name": pickup_location_name,
+        "pickup_location_address": pickup_address,
+        "subtotal_cents": int(subtotal_cents),
+        "total_cents": int(subtotal_cents) + int(delivery_fee_cents) + int(shipping_deposit_cents),
+        "note": note,
+    }
+
+
+@app.get("/api/fulfillment/config")
+def get_fulfillment_config():
+    conn = get_db()
+    try:
+        settings = get_delivery_settings(conn)
+        waivers = get_active_delivery_fee_waivers(conn)
+    finally:
+        conn.close()
+
+    return jsonify(
+        {
+            "pickup_location": {
+                "name": str(settings["pickup_location_name"] or "Daytona Supply Warehouse").strip(),
+                "line1": str(settings["pickup_address_line1"] or "").strip(),
+                "line2": str(settings["pickup_address_line2"] or "").strip(),
+                "city": str(settings["pickup_city"] or "").strip(),
+                "state": str(settings["pickup_state"] or "").strip(),
+                "postal_code": str(settings["pickup_postal_code"] or "").strip(),
+                "country": str(settings["pickup_country"] or "").strip(),
+            },
+            "base_fee_cents": int(settings["base_fee_cents"] or 0),
+            "per_mile_fee_cents": int(settings["per_mile_fee_cents"] or 0),
+            "long_distance_shipping_threshold_miles": float(settings["long_distance_shipping_threshold_miles"] or 30),
+            "long_distance_deposit_cents": int(settings["long_distance_deposit_cents"] or 0),
+            "require_phone_for_pickup": bool(settings["require_phone_for_pickup"]),
+            "require_address_for_delivery": bool(settings["require_address_for_delivery"]),
+            "waiver_rules": [
+                {
+                    "label": str(rule["label"] or "").strip(),
+                    "max_distance_miles": float(rule["max_distance_miles"] or 0),
+                    "minimum_subtotal_cents": int(rule["minimum_subtotal_cents"] or 0),
+                }
+                for rule in waivers
+            ],
+        }
+    ), 200
+
+
+@app.post("/api/checkout/quote")
+def get_checkout_quote():
+    data = request.get_json(silent=True) or {}
+
+    try:
+        parsed_items = parse_checkout_items(data)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    conn = get_db()
+    try:
+        customer_id_raw = data.get("customer_id")
+        customer_id: int | None = None
+        if customer_id_raw not in (None, ""):
+            customer_id = int(customer_id_raw)
+        user = get_checkout_user(conn, customer_id)
+        expanded_items, subtotal_cents = build_order_and_total(conn, parsed_items)
+        quote = build_fulfillment_quote(conn, data=data, subtotal_cents=subtotal_cents, user=user)
+        quote["items"] = expanded_items
+    except (TypeError, ValueError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    except LookupError as exc:
+        return jsonify({"error": str(exc)}), 404
+    finally:
+        conn.close()
+
+    return jsonify(quote), 200
+
+
 @app.get("/api/menu")
 def get_menu_items():
     conn = get_db()
     try:
         use_square_menu_only = False
         availability_live = False
+        ignored_categories = get_ignored_inventory_values(conn, match_type="category")
 
         if SQUARE_ACCESS_TOKEN:
             try:
@@ -2213,7 +3310,7 @@ def get_menu_items():
         rows = conn.execute(
             """
             SELECT id, name, category, description, price_cents, is_available,
-                   square_catalog_id, square_variation_id, created_at
+                     image_url, square_catalog_id, square_variation_id, created_at
             FROM menu_items
             WHERE (? = 0 OR square_catalog_id IS NOT NULL)
             ORDER BY
@@ -2233,6 +3330,8 @@ def get_menu_items():
     items = []
     for row in rows:
         item = dict(row)
+        if normalize_ignored_inventory_value(item.get("category")) in ignored_categories:
+            continue
         item.pop("square_catalog_id", None)
         item.pop("square_variation_id", None)
         if use_square_menu_only and not availability_live:
@@ -2271,7 +3370,7 @@ def create_menu_item():
         item_id = cursor.lastrowid
         row = conn.execute(
             """
-            SELECT id, name, category, description, price_cents, is_available, created_at
+            SELECT id, name, category, description, image_url, price_cents, is_available, created_at
             FROM menu_items
             WHERE id = ?
             """,
@@ -2356,12 +3455,6 @@ def update_current_user_profile():
         shipping_state = str(data.get("shipping_state", user["shipping_state"] or "")).strip()
         shipping_postal_code = str(data.get("shipping_postal_code", user["shipping_postal_code"] or "")).strip()
         shipping_country = str(data.get("shipping_country", user["shipping_country"] or "")).strip()
-        billing_address_line1 = str(data.get("billing_address_line1", user["billing_address_line1"] or "")).strip()
-        billing_address_line2 = str(data.get("billing_address_line2", user["billing_address_line2"] or "")).strip()
-        billing_city = str(data.get("billing_city", user["billing_city"] or "")).strip()
-        billing_state = str(data.get("billing_state", user["billing_state"] or "")).strip()
-        billing_postal_code = str(data.get("billing_postal_code", user["billing_postal_code"] or "")).strip()
-        billing_country = str(data.get("billing_country", user["billing_country"] or "")).strip()
 
         if not name:
             return jsonify({"error": "name is required"}), 400
@@ -2380,9 +3473,7 @@ def update_current_user_profile():
                 shipping_address_line1 = ?,
                 shipping_address_line2 = ?, shipping_city = ?, shipping_state = ?,
                 shipping_postal_code = ?, shipping_country = ?,
-                billing_address_line1 = ?, billing_address_line2 = ?,
-                billing_city = ?, billing_state = ?, billing_postal_code = ?,
-                billing_country = ?, updated_at = ?
+                updated_at = ?
             WHERE id = ?
             """,
             (
@@ -2395,12 +3486,6 @@ def update_current_user_profile():
                 shipping_state,
                 shipping_postal_code,
                 shipping_country,
-                billing_address_line1,
-                billing_address_line2,
-                billing_city,
-                billing_state,
-                billing_postal_code,
-                billing_country,
                 now_iso(),
                 user["id"],
             ),
@@ -2468,8 +3553,13 @@ def get_my_orders():
 
         order_rows = conn.execute(
             """
-                 SELECT id, customer_id, status, total_cents, notes, payment_status,
-                     square_payment_id, paid_at, created_at
+                 SELECT id, customer_id, status, subtotal_cents, total_cents, notes,
+                     fulfillment_method, buyer_phone,
+                     delivery_address_line1, delivery_address_line2, delivery_city,
+                     delivery_state, delivery_postal_code, delivery_country,
+                     delivery_distance_miles, delivery_fee_cents, delivery_fee_waived,
+                     delivery_fee_rule_label, shipping_required, shipping_deposit_cents,
+                     pickup_location_name, payment_status, square_payment_id, paid_at, created_at
             FROM orders
             WHERE customer_id = ?
             ORDER BY id DESC
@@ -2505,8 +3595,13 @@ def get_orders():
     try:
         order_rows = conn.execute(
             """
-                 SELECT id, customer_id, status, total_cents, notes, payment_status,
-                     square_payment_id, paid_at, created_at
+                 SELECT id, customer_id, status, subtotal_cents, total_cents, notes,
+                     fulfillment_method, buyer_phone,
+                     delivery_address_line1, delivery_address_line2, delivery_city,
+                     delivery_state, delivery_postal_code, delivery_country,
+                     delivery_distance_miles, delivery_fee_cents, delivery_fee_waived,
+                     delivery_fee_rule_label, shipping_required, shipping_deposit_cents,
+                     pickup_location_name, payment_status, square_payment_id, paid_at, created_at
             FROM orders
             ORDER BY id DESC
             """
@@ -2608,7 +3703,9 @@ def create_order():
 
         try:
             parsed_items = parse_checkout_items({"items": items})
-            expanded_items, total_cents = build_order_and_total(conn, parsed_items)
+            expanded_items, subtotal_cents = build_order_and_total(conn, parsed_items)
+            user = get_checkout_user(conn, customer_id)
+            quote = build_fulfillment_quote(conn, data=data, subtotal_cents=subtotal_cents, user=user)
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
         except LookupError as exc:
@@ -2619,15 +3716,31 @@ def create_order():
             customer_id=customer_id,
             notes=notes,
             expanded_items=expanded_items,
-            total_cents=total_cents,
+            total_cents=int(quote["total_cents"]),
+            subtotal_cents=int(quote["subtotal_cents"]),
+            fulfillment_method=str(quote["fulfillment_method"]),
+            buyer_phone=str(quote["buyer_phone"]),
+            delivery_address=quote["delivery_address"],
+            delivery_distance_miles=quote["distance_miles"],
+            delivery_fee_cents=int(quote["delivery_fee_cents"]),
+            delivery_fee_waived=bool(quote["delivery_fee_waived"]),
+            delivery_fee_rule_label=str(quote["delivery_fee_rule_label"]),
+            shipping_required=bool(quote["shipping_required"]),
+            shipping_deposit_cents=int(quote["shipping_deposit_cents"]),
+            pickup_location_name=str(quote["pickup_location_name"]),
         )
 
         conn.commit()
 
         order = conn.execute(
             """
-                 SELECT id, customer_id, status, total_cents, notes, payment_status,
-                     square_payment_id, paid_at, created_at
+                 SELECT id, customer_id, status, subtotal_cents, total_cents, notes,
+                     fulfillment_method, buyer_phone,
+                     delivery_address_line1, delivery_address_line2, delivery_city,
+                     delivery_state, delivery_postal_code, delivery_country,
+                     delivery_distance_miles, delivery_fee_cents, delivery_fee_waived,
+                     delivery_fee_rule_label, shipping_required, shipping_deposit_cents,
+                     pickup_location_name, payment_status, square_payment_id, paid_at, created_at
             FROM orders
             WHERE id = ?
             """,
@@ -2636,6 +3749,7 @@ def create_order():
 
         result = dict(order)
         result["items"] = expanded_items
+        result["quote"] = quote
     finally:
         conn.close()
 
@@ -2684,7 +3798,9 @@ def create_square_checkout():
                 return jsonify({"error": "customer_id not found"}), 404
 
         try:
-            expanded_items, total_cents = build_order_and_total(conn, parsed_items)
+            expanded_items, subtotal_cents = build_order_and_total(conn, parsed_items)
+            user = get_checkout_user(conn, customer_id)
+            quote = build_fulfillment_quote(conn, data=data, subtotal_cents=subtotal_cents, user=user)
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
         except LookupError as exc:
@@ -2695,7 +3811,18 @@ def create_square_checkout():
             customer_id=customer_id,
             notes=notes,
             expanded_items=expanded_items,
-            total_cents=total_cents,
+            total_cents=int(quote["total_cents"]),
+            subtotal_cents=int(quote["subtotal_cents"]),
+            fulfillment_method=str(quote["fulfillment_method"]),
+            buyer_phone=str(quote["buyer_phone"]),
+            delivery_address=quote["delivery_address"],
+            delivery_distance_miles=quote["distance_miles"],
+            delivery_fee_cents=int(quote["delivery_fee_cents"]),
+            delivery_fee_waived=bool(quote["delivery_fee_waived"]),
+            delivery_fee_rule_label=str(quote["delivery_fee_rule_label"]),
+            shipping_required=bool(quote["shipping_required"]),
+            shipping_deposit_cents=int(quote["shipping_deposit_cents"]),
+            pickup_location_name=str(quote["pickup_location_name"]),
         )
         conn.commit()
 
@@ -2704,7 +3831,7 @@ def create_square_checkout():
             "idempotency_key": str(uuid4()),
             "quick_pay": {
                 "name": f"Bagel Shop Order #{order_id}",
-                "price_money": {"amount": total_cents, "currency": "USD"},
+                "price_money": {"amount": int(quote["total_cents"]), "currency": "USD"},
                 "location_id": SQUARE_LOCATION_ID,
             },
             "checkout_options": {
@@ -2743,6 +3870,7 @@ def create_square_checkout():
         return jsonify(
             {
                 "order_id": order_id,
+                "quote": quote,
                 "checkout_url": checkout_url,
                 "requested_payment_methods": {
                     "cash_app_pay": allow_cash_app,
@@ -2827,6 +3955,7 @@ def square_webhook():
                             order_id,
                         ),
                     )
+                    send_order_confirmation_emails(conn, order_id)
                 elif payment_status in {"FAILED", "CANCELED"}:
                     conn.execute(
                         """
