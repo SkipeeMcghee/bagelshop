@@ -264,9 +264,12 @@ async function loadMonth() {
     }
 
     calendarStatus.textContent = "Loading events...";
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 12000);
     try {
         const response = await fetch(`${EVENTS_API_ROOT}/events?month=${getMonthKey(visibleMonth)}`, {
             credentials: "include",
+            signal: controller.signal,
         });
         const data = await response.json().catch(() => []);
         if (!response.ok) {
@@ -277,7 +280,11 @@ async function loadMonth() {
     } catch (error) {
         monthEvents = [];
         renderCalendar();
-        calendarStatus.textContent = String(error.message || error);
+        calendarStatus.textContent = error?.name === "AbortError"
+            ? "Timed out loading events. Please refresh and try again."
+            : String(error.message || error);
+    } finally {
+        window.clearTimeout(timeoutId);
     }
 }
 
