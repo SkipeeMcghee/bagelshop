@@ -3294,6 +3294,13 @@ def get_checkout_quote():
 def get_menu_items():
     conn = get_db()
     try:
+        try:
+            conn.execute("SELECT 1 FROM menu_items LIMIT 1").fetchone()
+        except sqlite3.OperationalError:
+            conn.close()
+            init_db()
+            conn = get_db()
+
         use_square_menu_only = False
         availability_live = False
         ignored_categories = get_ignored_inventory_values(conn, match_type="category")
@@ -3303,8 +3310,9 @@ def get_menu_items():
                 sync_result = refresh_square_menu_cache(conn)
                 conn.commit()
                 availability_live = bool(sync_result.get("availability_live"))
-            except (ApiError, requests.RequestException):
+            except Exception as exc:
                 conn.rollback()
+                print(f"[menu sync] Falling back to cached menu: {exc}", flush=True)
             use_square_menu_only = get_cached_square_menu_count(conn) > 0
 
         rows = conn.execute(
@@ -4043,6 +4051,8 @@ def seed_data():
     return jsonify({"message": "seeded"}), 201
 
 
+init_db()
+
+
 if __name__ == "__main__":
-    init_db()
     app.run(host="127.0.0.1", port=5000, debug=True)
