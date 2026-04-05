@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Everything Bagelry</title>
     <link rel="icon" type="image/png" href="/assets/images/BagelryLogo.png?v=20260404b" />
-    <link rel="stylesheet" href="styles.css?v=20260405e" />
+    <link rel="stylesheet" href="styles.css?v=20260405h" />
 </head>
 <body>
     <main class="container landing-page">
@@ -44,16 +44,80 @@
             </div>
         </nav>
 
-        <section class="panel landing-hero">
-            <div class="landing-copy">
-                <p class="eyebrow">Neighborhood bagel shop</p>
-                <p class="landing-kicker">Boiled, baked, and built for slow mornings.</p>
-                <h2>Fresh bagels, whipped spreads, and coffeehouse comfort.</h2>
+        <section class="panel landing-rich-hero">
+            <div class="landing-hero-grid">
+                <div class="landing-copy">
+                    <p class="eyebrow">Neighborhood bagel shop</p>
+                    <p class="landing-kicker">Boiled, baked, and built for slow mornings.</p>
+                    <h2>New York-style bagels with a page that finally lets the food carry the mood.</h2>
+                    <p class="hero-copy">
+                        Everything Bagelry is about classic bagel-shop comfort: glossy crust, generous spreads,
+                        breakfast favorites, and the kind of lineup people want to come back for again and again.
+                    </p>
+                    <p class="hero-copy">
+                        The photos now do more of the talking, which is how the home page should feel from the start.
+                    </p>
+                    <div class="landing-hero-actions">
+                        <a class="menu-cta" href="menu.html">View Menu</a>
+                        <a class="secondary-button" href="about.html">About Us</a>
+                    </div>
+                </div>
+
+                <div class="landing-photo-mosaic" aria-label="Featured bagel photography">
+                    <figure class="mosaic-card mosaic-card-large">
+                        <img src="/assets/images/farmersmarket.png" alt="Everything Bagelry display at a farmers market" class="mosaic-image" />
+                    </figure>
+                    <figure class="mosaic-card mosaic-card-tall">
+                        <img src="/assets/images/everythingbagels.png" alt="Everything bagels stacked together" class="mosaic-image" />
+                    </figure>
+                    <figure class="mosaic-card">
+                        <img src="/assets/images/cinraisinbagels.png" alt="Cinnamon raisin bagels" class="mosaic-image" />
+                    </figure>
+                    <figure class="mosaic-card">
+                        <img src="/assets/images/asiagobagels.png" alt="Asiago bagels" class="mosaic-image" />
+                    </figure>
+                    <figure class="mosaic-card mosaic-card-wide">
+                        <img src="/assets/images/assortedbagels.png" alt="Assorted bagels arranged together" class="mosaic-image" />
+                    </figure>
+                </div>
+            </div>
+        </section>
+
+        <section class="home-highlight-grid" aria-label="Home highlights">
+            <article class="panel home-highlight-card">
+                <p class="eyebrow">Fresh baked</p>
+                <h3>Classic texture first</h3>
+                <p>Shiny crust, deep bake, and the satisfying chew people expect from a true New York-style bagel.</p>
+            </article>
+            <article class="panel home-highlight-card">
+                <p class="eyebrow">Favorite lineup</p>
+                <h3>Sweet, savory, and crowd-ready</h3>
+                <p>From cinnamon raisin to asiago to assorted bagel bundles, the lineup is built for repeat cravings.</p>
+            </article>
+            <article class="panel home-highlight-card">
+                <p class="eyebrow">Easy ordering</p>
+                <h3>Pickup and delivery without the clutter</h3>
+                <p>Browse, save your account details, and come back to your usual order without extra friction.</p>
+            </article>
+        </section>
+
+        <section class="panel home-story-section">
+            <div class="home-story-copy">
+                <p class="eyebrow">What the shop is going for</p>
+                <h2>Comfort food presentation with actual appetite appeal.</h2>
                 <p class="hero-copy">
-                    Step into the menu and browse the lineup like you are standing at the counter.
-                    The landing page stays simple so the food can do the talking.
+                    Breakfast sandwiches, toasted favorites, cream cheese, and bagel boxes should feel familiar,
+                    warm, and a little irresistible. The new image-driven layout gives the home page a better first impression
+                    without losing the simple ordering flow.
                 </p>
-                <a class="menu-cta" href="menu.html">View Menu</a>
+            </div>
+            <div class="home-mini-gallery" aria-label="Signature bagel images">
+                <figure class="home-mini-gallery-card">
+                    <img src="/assets/images/everythingbagels.png" alt="Everything bagels close-up" class="home-mini-gallery-image" />
+                </figure>
+                <figure class="home-mini-gallery-card">
+                    <img src="/assets/images/assortedbagels.png" alt="Assorted bagels" class="home-mini-gallery-image" />
+                </figure>
             </div>
         </section>
     </main>
@@ -77,6 +141,6 @@
         </div>
     </footer>
 
-    <script src="app.js?v=20260405d"></script>
+    <script src="app.js?v=20260405e"></script>
 </body>
 </html>
