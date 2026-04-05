@@ -1361,7 +1361,7 @@ def build_email_verification_message(name: str, verification_link: str) -> tuple
     return subject, body
 
 
-def send_email_message(*, to_email: str, subject: str, body: str) -> str:
+def send_email_message(*, to_email: str, subject: str, body: str, reply_to: str = "") -> str:
     if SMTP_HOST and SMTP_FROM_EMAIL:
         message = EmailMessage()
         message["Subject"] = subject
@@ -1369,17 +1369,22 @@ def send_email_message(*, to_email: str, subject: str, body: str) -> str:
             f"{SMTP_FROM_NAME} <{SMTP_FROM_EMAIL}>" if SMTP_FROM_NAME else SMTP_FROM_EMAIL
         )
         message["To"] = to_email
+        reply_to_value = str(reply_to or "").strip()
+        if reply_to_value:
+            message["Reply-To"] = reply_to_value
         message.set_content(body)
 
         if SMTP_USE_SSL:
-            with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=20) as server:
+            with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=12) as server:
                 if SMTP_USERNAME:
                     server.login(SMTP_USERNAME, SMTP_PASSWORD)
                 server.send_message(message)
         else:
-            with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20) as server:
+            with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=12) as server:
+                server.ehlo()
                 if SMTP_USE_TLS:
                     server.starttls()
+                    server.ehlo()
                 if SMTP_USERNAME:
                     server.login(SMTP_USERNAME, SMTP_PASSWORD)
                 server.send_message(message)
@@ -3704,11 +3709,23 @@ def submit_contact_form():
 
         delivery = "console"
         if recipient_email:
-            delivery = send_email_message(
-                to_email=recipient_email,
-                subject=delivery_subject,
-                body=delivery_body,
-            )
+            try:
+                delivery = send_email_message(
+                    to_email=recipient_email,
+                    subject=delivery_subject,
+                    body=delivery_body,
+                    reply_to=sender_email,
+                )
+            except Exception as exc:
+                print(f"[contact form] Email delivery failed: {exc}", flush=True)
+                return jsonify(
+                    {
+                        "error": (
+                            "Could not deliver the message to the shop inbox. "
+                            f"SMTP error: {exc}"
+                        )
+                    }
+                ), 502
 
         print(
             "[contact form] "
