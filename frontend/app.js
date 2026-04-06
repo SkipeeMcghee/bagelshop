@@ -583,16 +583,6 @@ function createMenuCard(item) {
         imagePlaceholder.classList.add("has-photo");
     }
 
-    const imageLabel = document.createElement("strong");
-    imageLabel.className = "menu-card-image-label";
-    imageLabel.textContent = imageUrl ? item.name : "Image coming soon";
-
-    const imageHint = document.createElement("span");
-    imageHint.className = "menu-card-image-hint";
-    imageHint.textContent = imageUrl ? "" : item.name;
-
-    imagePlaceholder.append(imageLabel, imageHint);
-
     const body = document.createElement("div");
     body.className = "menu-card-body";
 
